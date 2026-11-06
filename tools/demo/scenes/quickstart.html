@@ -33,9 +33,9 @@ const PS = 'PS C:\\dev\\my-app> '
 const PS_FG = '#cccccc', PS_CMD = '#f9f1a5' // Windows Terminal 默认配色 + PSReadLine 的命令名黄色
 const DT = 0.032 // 每个字的打字间隔
 const CMDS = [
-  { cmd: 'claude plugin marketplace add ronanworks/claude-code-mods', at: 0.55, out: 'Successfully added marketplace: claude-code-mods (declared in user settings)' },
-  { cmd: 'claude plugin install usage-hud@claude-code-mods', at: 4.25, out: 'Successfully installed plugin: usage-hud@claude-code-mods (scope: user)' },
-  { cmd: 'claude plugin install html-shelf@claude-code-mods', at: 6.65, out: 'Successfully installed plugin: html-shelf@claude-code-mods (scope: user)' },
+  { cmd: 'claude plugin marketplace add SsageParuders/claude-status-hub', at: 0.55, out: 'Successfully added marketplace: claude-status-hub (declared in user settings)' },
+  { cmd: 'claude plugin install usage-hud@claude-status-hub', at: 4.25, out: 'Successfully installed plugin: usage-hud@claude-status-hub (scope: user)' },
+  { cmd: 'claude plugin install html-shelf@claude-status-hub', at: 6.65, out: 'Successfully installed plugin: html-shelf@claude-status-hub (scope: user)' },
   { cmd: 'claude', at: 9.75, out: null, dt: 0.085 },
 ]
 for (const c of CMDS) {
@@ -209,7 +209,7 @@ const pills = STEPS.map(s => {
 })
 const prog = document.createElement('div')
 prog.className = 'progress'
-prog.innerHTML = '<span><b>claude-code-mods</b> · 三步装好</span><div class="bars"><div><i></i></div><div><i></i></div><div><i></i></div></div>'
+prog.innerHTML = '<span><b>claude-status-hub</b> · 三步装好</span><div class="bars"><div><i></i></div><div><i></i></div><div><i></i></div></div>'
 document.body.appendChild(prog)
 const progBars = [...prog.querySelectorAll('i')]
 

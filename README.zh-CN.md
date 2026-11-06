@@ -1,6 +1,6 @@
 <div align="center">
 
-# claude-code-mods
+# claude-status-hub
 
 [English](README.md) | 简体中文
 
@@ -33,17 +33,17 @@ Claude Code 的 [mods](https://code.claude.com/docs/zh-CN/plugins/mods/overview)
 **1. 添加插件市场**（在你的终端里运行）
 
 ```bash
-claude plugin marketplace add ronanworks/claude-code-mods
+claude plugin marketplace add SsageParuders/claude-status-hub
 ```
 
 **2. 安装两个 mod**（只要一个就只装一个）
 
 ```bash
-claude plugin install usage-hud@claude-code-mods
+claude plugin install usage-hud@claude-status-hub
 ```
 
 ```bash
-claude plugin install html-shelf@claude-code-mods
+claude plugin install html-shelf@claude-status-hub
 ```
 
 **3. 重新打开 claude**
@@ -60,7 +60,7 @@ claude plugin install html-shelf@claude-code-mods
 ```json
 {
   "env": {
-    "CLAUDE_CODE_PLUGIN_DIRS": "C:\\path\\to\\claude-code-mods\\usage-hud;C:\\path\\to\\claude-code-mods\\html-shelf"
+    "CLAUDE_CODE_PLUGIN_DIRS": "C:\\path\\to\\claude-status-hub\\usage-hud;C:\\path\\to\\claude-status-hub\\html-shelf"
   }
 }
 ```
@@ -68,12 +68,12 @@ claude plugin install html-shelf@claude-code-mods
 只想试一次、不改设置：
 
 ```bash
-claude --plugin-dir ./claude-code-mods/usage-hud --plugin-dir ./claude-code-mods/html-shelf
+claude --plugin-dir ./claude-status-hub/usage-hud --plugin-dir ./claude-status-hub/html-shelf
 ```
 
 </details>
 
-**更新**：在 Claude Code 里运行 `/plugin marketplace update claude-code-mods`。也可以在 `/plugin` → Marketplaces 里给这个市场打开自动更新。
+**更新**：在 Claude Code 里运行 `/plugin marketplace update claude-status-hub`。也可以在 `/plugin` → Marketplaces 里给这个市场打开自动更新。
 
 **装之前想先看它做什么**：mod 以你的权限运行。克隆仓库后运行 `claude plugin validate ./usage-hud`，输出的 `hooks:` 和 `calls:` 两行列出它挂了哪些事件、调用了什么。
 
@@ -191,7 +191,7 @@ claude --plugin-dir ./claude-code-mods/usage-hud --plugin-dir ./claude-code-mods
 移除插件市场，会连同装过的 mod 一起卸载：
 
 ```bash
-claude plugin marketplace remove claude-code-mods
+claude plugin marketplace remove claude-status-hub
 ```
 
 用本地文件夹加载的，从 `CLAUDE_CODE_PLUGIN_DIRS` 里删掉对应路径，重新打开 claude 即可。
@@ -227,4 +227,6 @@ assets/                     README 用的动图
 
 ## 许可证
 
-[MIT](LICENSE) © 2026 Ronan
+[MIT](LICENSE) © 2026 Ronan, SsageParuders
+
+最初来自 Ronan 的 [ronanworks/claude-code-mods](https://github.com/ronanworks/claude-code-mods)。

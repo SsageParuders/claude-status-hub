@@ -1,6 +1,6 @@
 <div align="center">
 
-# claude-code-mods
+# claude-status-hub
 
 English | [简体中文](README.zh-CN.md)
 
@@ -35,17 +35,17 @@ Claude Code [mods](https://code.claude.com/docs/en/plugins/mods/overview) are pl
 **1. Add the plugin marketplace** (run in your terminal)
 
 ```bash
-claude plugin marketplace add ronanworks/claude-code-mods
+claude plugin marketplace add SsageParuders/claude-status-hub
 ```
 
 **2. Install the two mods** (or only the one you want)
 
 ```bash
-claude plugin install usage-hud@claude-code-mods
+claude plugin install usage-hud@claude-status-hub
 ```
 
 ```bash
-claude plugin install html-shelf@claude-code-mods
+claude plugin install html-shelf@claude-status-hub
 ```
 
 **3. Restart claude**
@@ -62,7 +62,7 @@ Clone the repository, then put the absolute paths of the two folders in the `env
 ```json
 {
   "env": {
-    "CLAUDE_CODE_PLUGIN_DIRS": "/path/to/claude-code-mods/usage-hud:/path/to/claude-code-mods/html-shelf"
+    "CLAUDE_CODE_PLUGIN_DIRS": "/path/to/claude-status-hub/usage-hud:/path/to/claude-status-hub/html-shelf"
   }
 }
 ```
@@ -70,12 +70,12 @@ Clone the repository, then put the absolute paths of the two folders in the `env
 To try them once without changing any settings:
 
 ```bash
-claude --plugin-dir ./claude-code-mods/usage-hud --plugin-dir ./claude-code-mods/html-shelf
+claude --plugin-dir ./claude-status-hub/usage-hud --plugin-dir ./claude-status-hub/html-shelf
 ```
 
 </details>
 
-**Updating:** run `/plugin marketplace update claude-code-mods` inside Claude Code, or turn on auto-update for this marketplace under `/plugin` → Marketplaces.
+**Updating:** run `/plugin marketplace update claude-status-hub` inside Claude Code, or turn on auto-update for this marketplace under `/plugin` → Marketplaces.
 
 **See what a mod does before you install it:** a mod runs with your permissions. Clone the repository and run `claude plugin validate ./usage-hud`; the `hooks:` and `calls:` lines list the events it handles and what it calls.
 
@@ -193,7 +193,7 @@ In the desktop app, the panel becomes a dedicated SVG card (crab + dashboard) ab
 Removing the marketplace also uninstalls the mods you installed from it:
 
 ```bash
-claude plugin marketplace remove claude-code-mods
+claude plugin marketplace remove claude-status-hub
 ```
 
 If you loaded the folders directly, remove their paths from `CLAUDE_CODE_PLUGIN_DIRS` and restart claude.
@@ -229,4 +229,6 @@ assets/                     GIFs for this README
 
 ## License
 
-[MIT](LICENSE) © 2026 Ronan
+[MIT](LICENSE) © 2026 Ronan, SsageParuders
+
+Originally based on [ronanworks/claude-code-mods](https://github.com/ronanworks/claude-code-mods) by Ronan.
