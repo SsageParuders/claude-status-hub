@@ -23,7 +23,7 @@ Claude Code [mods](https://code.claude.com/docs/en/plugins/mods/overview) are pl
 
 | Mod | What it does |
 |---|---|
-| **usage-hud** | A usage panel under the prompt and a pixel crab above it. The crab acts out the tool Claude is using, walks with your subagents, and its mood follows how fast you burn your quota. The panel shows model and effort, project and branch, session time and cost, context / 5-hour / weekly usage and tokens, all at a glance |
+| **usage-hud** | A usage panel under the prompt with a pixel crab on its left. The crab acts out the tool Claude is using with a prop in its claws, and its mood follows how fast you burn your quota. The panel shows model and effort, project and branch, session time and cost, context / 5-hour / weekly usage and tokens, all at a glance |
 | **html-shelf** | File paths in Claude's replies (HTML, PDF, images, video, folders …) open with one click. Code blocks, and commands written inline, are drawn as cards you can copy or drop into the prompt |
 
 > The UI text is in Chinese. The GIFs on this page show exactly what you get.
@@ -81,7 +81,7 @@ claude --plugin-dir ./claude-code-mods/usage-hud --plugin-dir ./claude-code-mods
 
 ## usage-hud: an animated usage panel
 
-In the terminal, usage-hud draws two things: a usage panel under the prompt, and a pixel crab that walks in a strip above it.
+In the terminal, usage-hud draws a usage panel under the prompt with a pixel crab on its left (12 columns of crab plus 3 for its prop, three rows tall, no extra rows). Under 66 columns the panel becomes one line and the crab a one-row mini crab.
 
 The panel is a 3 × 3 grid whose labels line up in columns:
 
@@ -93,34 +93,44 @@ The panel is a 3 × 3 grid whose labels line up in columns:
 
 The 5-hour and weekly bars each carry a bright `│` tick that marks how much of the window has passed, and a short countdown to the reset follows the bar, such as `1h54m`. When the colored part runs past the tick, you are using quota faster than the clock.
 
-**The crab above the prompt** (terminal only) lives in a strip right above the input box: one blank row that keeps it apart from the conversation, then three rows of crab. It follows what Claude is doing:
+On accounts without a 5-hour limit (such as verified Ultra), the panel sees only a weekly reading and drops the 5-hour cell: in the full layout row 2 becomes context | weekly | reset, the third cell showing when the weekly window resets (today / tomorrow / weekday + time) and the pace (such as `配速 0.8x`, red when you will run out); the medium layout's right column becomes context / weekly / session; the compact line leaves the 5-hour segment out. It comes back as soon as a 5-hour reading does.
+
+**The crab** (terminal only) sits on the left of the panel and follows what Claude is doing; the three columns on its right hold its prop, and its body color shows context use:
 
 | Claude is | The crab |
 |---|---|
-| Thinking or replying | Walks sideways, eyes on where it's going; thinking dots rise while it thinks |
-| Reading or searching | Stops and reads a page while a scan line moves |
-| Writing or editing a file | Stops and taps with its right claw as the page fills with text |
-| Running a command | Stops and types with both claws, terminal cursor blinking |
-| On the web | Stops beside a spinning globe |
-| Running subagents | Each running subagent adds a baby crab to the line; when it finishes, its crab waves and leaves. The status cell says how many ("+3 agents") |
-| Done with a turn | Jumps with claws up, gold sparkles |
-| Idle / idle for 5 minutes | Strolls a few steps now and then, blinks and looks around / sleeps, blowing bubbles |
-| You type / you send | Stops and looks down at the input box / jumps |
+| Thinking or replying | Looks to the right, thinking dots above its head |
+| Reading or searching | Reads a page while a scan line moves |
+| Writing or editing a file | Taps with its right claw as the page fills with text |
+| Running a command | Types with both claws, terminal cursor blinking |
+| On the web | A spinning globe beside it |
+| Any other tool | A turning gear beside it |
+| Done with a turn | Jumps with claws up, gold sparkles; the status cell says `✓ 上一轮 3m12s` (last turn) and the tool count |
+| Running subagents | A baby crab hops in the bottom-right corner of the prop area (the prop shrinks to three rows and moves above it, so both stay visible). While the main thread is idle, the big crab watches the baby crab and raises a claw now and then to cheer it on. When the subagents all finish, the baby crab fades out. The status cell ends with "+N agents"; click it for the subagent board |
+| You send a message | Jumps |
+| Idle / idle for 5 minutes | Blinks, looks around, waves now and then / sleeps, blowing bubbles |
 | At ≥ 80% context | Turns red and sweats; at ≥ 95% flashes red |
+
+A tool that runs for only tens of milliseconds (Glob, Read) still shows its prop for at least 0.6 s, and the crab doesn't flicker back to thinking between back-to-back tools.
+
+**The status cell lights up with events** for about 5 seconds, then goes back to the usual status; while Claude works, only the tool name is replaced and the activity bar and timer stay:
+
+| Event | Status cell |
+|---|---|
+| A request is done (after any background subagents report back) | Green `✓ 搞定 3m12s` (done), then the dim `✓ 上一轮 3m12s` (last turn) line; the crab jumps |
+| Your pace turns to "runs out before the reset" | Bold red `慢点！40m用完` (slow down, empty in 40m), once per window |
+| Context first reaches 75% | Yellow `上下文快满了，可以压缩` (context nearly full; the compact button appears too) |
+| A compaction finishes | Green `✓ 压缩完了` (compacted) |
+| A quota window resets | Green `✓ 5 小时额度刷新了` (quota refreshed) and a quick jump, plus a toast |
 
 **The crab also has moods that follow your quota pace** (pace = actual usage ÷ the usage expected for the time elapsed):
 
 | Quota | The crab | The panel |
 |---|---|---|
-| Using less than the clock (pace < 0.8) | Wears sunglasses, strolls | Normal |
-| Clearly ahead of pace, on track to run out before the reset | Sweats, walks faster | The percentage and the countdown turn red: `40m用完` (empty in 40m) |
-| Runs out within 30 minutes, or ≥ 95% used | Panics with claws up and a "!", scurries | Same as above |
+| Clearly ahead of pace, on track to run out before the reset | A drop of sweat | The percentage and the countdown turn red: `40m用完` (empty in 40m) |
+| Runs out within 30 minutes, or ≥ 95% used | Panics with claws up, shaking, a big "!" beside it | Same as above |
 
-- Small particles keep it lively: dust behind its feet, a drop of sweat when it hurries, gold sparkles when a turn finishes, bubbles while it sleeps.
-- Speech bubbles appear beside the crab for a few seconds: a finished turn (「搞定 3m12s」, done), a finished compaction, a quota reset, a red pace warning (「慢点！40m用完」, slow down, empty in 40m), and a permission prompt waiting for you (「等你点头」).
-- In fullscreen mode (`/tui fullscreen`), point at the crab: it stops, waves, and holds a bubble with your usage and a tip until you move away. Point elsewhere on the strip and its eyes follow the pointer. No click needed; a click moves the keyboard focus to the strip, and Esc gives it back.
-- The row between the strip and the input box belongs to Claude Code itself (notices such as "copied 4 chars to clipboard" appear there), so the strip can't sit any lower.
-- The engine draws `[-]` at the strip's right end: click it or press ctrl+x ctrl+a to fold the strip away. `/hud crab off` turns it off for good. In a short terminal the strip drops its blank row first, then shrinks to two rows, one row, or hides.
+`/hud crab off` hides the crab and lets the grid take the whole row.
 
 **More practical touches**
 
@@ -131,13 +141,13 @@ The 5-hour and weekly bars each carry a bright `│` tick that marks how much of
 
 Clickable parts: model name → `/model`, effort level → `/effort`, project name → opens the project folder, context → `/context`, 5-hour / weekly → `/usage`, token → a breakdown, "+N agents" → the subagent board.
 
-The panel shrinks with the window: 81 columns or more shows the full 3 × 3 grid, 51–80 columns (such as macOS's default 80) a 3 × 2 grid, and under 51 columns a single line. In the terminal the panel always stays under the prompt.
+The panel shrinks with the window: 96 columns or more shows the crab and the full 3 × 3 grid, 66–95 columns (such as macOS's default 80) the crab and a 3 × 2 grid, and under 66 columns a single line led by a one-row mini crab. With the crab off, each threshold moves 17 columns lower. In the terminal the panel always stays under the prompt.
 
 | Command | What it does |
 |---|---|
 | `/hud` | Cycles full → compact (one line) → hidden |
 | `/hud agents` | Opens the subagent board; Esc closes it |
-| `/hud crab`, `/hud crab on`, `/hud crab off` | Toggles the crab above the prompt (on by default) |
+| `/hud crab`, `/hud crab on`, `/hud crab off` | Toggles the crab (on by default) |
 
 In the desktop app, the panel becomes a dedicated SVG card (crab + dashboard) above the prompt, borderless, following the light or dark theme:
 

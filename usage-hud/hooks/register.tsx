@@ -2,12 +2,12 @@ import type { Register } from 'claude-code'
 import { crabSvg, dashSvg, type DashData } from './desktop'
 import {
   FRAME_MS,
+  JUMP_FRAMES,
   SPRITE_W,
   MINI_W,
   DIM,
   VALUE,
   WARN,
-  COL,
   mix,
   isWide,
   dw,
@@ -15,15 +15,11 @@ import {
   encode,
   scenePx,
   miniPx,
+  crabPose,
   type Mood,
   type ToolKind,
   type Scene,
-  type Rows,
 } from './sprites'
-import { tipFit } from './sprites'
-import type { WalkProps } from './walkway' // 散步道的 Client 模块 (只取类型)
-export { previewLane, tipFit } from './sprites'
-export type { Mood } from './sprites'
 
 // usage-hud v0.5: 用量面板 (终端版 + 客户端版)
 //
@@ -31,10 +27,10 @@ export type { Mood } from './sprites'
 //   右边 SVG 仪表盘 (自带深色底板), 下面一行可点的链接; 绘制代码在 ./desktop.ts
 //
 // 位置 (终端, v0.16 起固定): 面板在输入框下方 (画在提示行 PromptHint 里, 引擎自己的提示行保留在最下面);
-//       螃蟹在输入框正上方的横栏 (AbovePrompt) 里散步 (Client 模块 walkway.tsx; /hud crab 开关); /hud top|bottom 只回一句话
-//       螃蟹的像素画 (面板那只 + 散步道) 在 sprites.ts, hooks 和 Client 共用
+//       螃蟹在面板左边 (v0.17.3 起回到旧排法, 散步道删掉了; /hud crab 开关); /hud top|bottom 只回一句话
+//       螃蟹的像素画在 sprites.ts
 //
-// 完整版是 "3 行 x 3 列" 的对齐网格 (v0.16 起终端面板里没有螃蟹), 每列起点在三行里完全一致:
+// 完整版是左边一只螃蟹 + "3 行 x 3 列" 的对齐网格, 每列起点在三行里完全一致:
 //   模型   Opus 5.5 ▁▂▃▅▇ medium   项目   my-app main               会话   6d18h   $199.91
 //   上下文 ━━━━━━━━  14% 140k/1.0M   5小时  ━━━━━━│━━━━━━  14% 3h05m    本周   ━━│━━━━━━━━━━  43% 1d18h
 //   状态   ▃▅▂ 读文件        12s     工具   Bash 12  Read 4         子代理 2 个运行中
@@ -42,54 +38,37 @@ export type { Mood } from './sprites'
 // 螃蟹动画 (全部用像素画, 不用可能宽度不一的符号):
 //   思考 -> 眼睛往右看 + 冒出思考点点      读/搜 -> 看一页纸, 扫描线上下移动
 //   改/写 -> 右钳子敲击 + 纸上逐渐写满字    跑命令 -> 双钳交替敲键盘 + 终端光标闪烁
-//   上网 -> 旋转的小地球                   派子代理 / 子代理在跑 -> 散步道里跟着走的小螃蟹 (v0.14)
+//   上网 -> 旋转的小地球                   子代理在跑 -> 道具区右下角一只横着迈步的小螃蟹
 //   其他工具 -> 转动的小齿轮               一轮结束 -> 举钳跳跃 + 金色闪光
 //   闲置 -> 眨眼 / 左右张望 / 偶尔挥手      5 分钟没动 -> 闭眼呼吸 + 冒泡泡
 //   上下文 >=80% -> 变红冒汗, >=95% -> 红色闪烁报警
 //   数字变化时会滚动过渡; 工作时上下文条有流光; 5小时/本周 >=90% 时用量条呼吸闪烁
 //
 // 可点击: 模型名 -> /model, 项目名 -> 打开项目文件夹, 上下文 -> /context, 5小时/本周 -> /usage
-// /hud: 完整 -> 精简(1 行) -> 隐藏 循环; /hud agents 子代理看板; /hud crab 开关散步道
+// /hud: 完整 -> 精简(1 行) -> 隐藏 循环; /hud agents 子代理看板; /hud crab 开关螃蟹
 //
 // v0.12 新增:
 //   配速预警: 按 5小时/本周 窗口已过的时间算 "应该用到多少", 预计重置前会用完时, 用量条后面改成红色 "约40m后用完"
-//   螃蟹情绪: 取 5小时 和 本周 里更紧张的那个 -> 悠闲 (戴墨镜) / 正常 / 冒汗 (汗滴) / 慌张 (举钳 + "!")
+//   螃蟹情绪: 取 5小时 和 本周 里更紧张的那个 -> 正常 / 冒汗 (汗滴) / 慌张 (举钳 + "!")
+//     (以前还有 "悠闲" 戴墨镜, v0.17.4 去掉了)
 //   每轮收据: 每轮结束那行 (Crunched for 9m 6s) 后面追加 "· $0.42 · 改 3 个文件 +120 -30 · 工具 12 次"
 //   一键压缩: 上下文 >=75% 时 "上下文" 那格出现 [压缩] 按钮 -> /compact; 额度重置后弹一次 "已恢复" 提示
 //   子代理看板: /hud agents 或点状态格里的 "+N代理" -> 侧边面板, 列出每个子代理的时长/最后动静/工具/状态
 //   点档位文字 -> /effort 打开档位滑块
-//   子代理小螃蟹: 有子代理在跑时, 右侧 3 列让给小螃蟹, 干活时也看得见
 //
 // v0.13 改动:
 //   时间刻度: 5小时/本周 的用量条上画一道亮色 │, 位置 = 窗口已过时间 / 窗口长度; 彩色段超过刻度 = 用得比时间快
 //   文字缩短: 平时只写重置倒计时 "1h54m" (暗色); 会用完时百分比变红, 文字写红色的 "40m用完"
 //     (v0.13.1: 预计用完的时间一定带 "用完"; 放不下就换 "4d用完", 再放不下照常写暗色的重置倒计时)
 //     完整版 5小时/本周 的附加那段从 11 列缩到 7 列, 省下的给用量条; 中等版三根条仍然一样长
-//   子代理小螃蟹: 不管几个子代理都只画一只 (3x2, 没有眼睛), 右下角慢慢跳; 数量看 "+N代理"
 //
-// v0.14 新增: 螃蟹散步道 (输入框正上方的横栏, 只在终端, 高 2 行; 只剩 1 行时画 1 行版)
-//   主会话一轮在跑 -> 大螃蟹横着走, 碰到两端掉头, 速度跟心情 (悠闲慢 / 正常 / 冒汗快 / 慌张小跑)
-//   闲着 -> 趴着偶尔眨眼; 5 分钟没动静 -> 睡着 (闭眼 + z); 一轮结束 -> 举钳跳
-//   每个运行中的子代理一只小螃蟹, 排成一队; 放不下画几只 + 暗色 "+N"; 子代理结束 -> 挥手 1.5 秒后离场
-//   主会话闲着、后台子代理还在跑 -> 大螃蟹照样走, 小螃蟹排成一队跟在后面 (v0.15 起; 状态写 "子代理在跑");
-//     面板里的螃蟹不再带小螃蟹
-//   气泡 (「」, 约 5 秒, 新的顶掉旧的): 搞定 3m12s / 压缩完了 / 额度刷新了 / 慢点！40m用完 (红) / 上下文快满了 / 等你点头
-//   鼠标停在横栏上 (只在全屏模式) -> 一行用量摘要 + 小贴士
-//
-// v0.16:
-//   终端面板去掉螃蟹, 网格占满整行; 各档分界前移 17 列 (完整版 81 列起, 中等版 51-80 列, 精简版不到 51 列)
-//   终端面板固定在输入框下方, 螃蟹固定在上方 (store 里存的 position 一律不读)
-//   散步道顶上加一行 "天空行" 隔开正文和螃蟹 (maxRows >=4: 天空 + 3 行版; 3: 天空 + 2 行版; 2 / 1: 没有天空行)
-//   散步道大螃蟹拿到面板螃蟹的整套动作 (scenePx): 用工具时停下做动作、道具画在右边; 在想时走, 头顶冒思考点点
-//   粒子加量 (走路同时 3-5 粒, 小跑 5-7 粒, 上限 24); 小螃蟹改成 7x4, 眼睛四周都是身体
-//   散步道整个搬进 Client 模块: 鼠标停在大螃蟹上 -> 停下举钳 + 气泡 (停下时定好), 离开约 0.5 秒后接着走
+// v0.14-v0.16: 螃蟹搬到输入框上方的 "散步道" 里来回走 (Client 模块 walkway.tsx), 终端面板里没有螃蟹; v0.17.3 删掉, 见 git 历史
 //
 // v0.16.3 (按第三次实测改):
 //   后台子代理的结果在主线程闲着时送回来, 不经过 prompt.submit, 直接是一个没有 prompt.submit 的 turn.start:
 //     这种 turn.start 算 "结果送到了一次"; 已经庆祝过的提问再来这种段, 只记账不再庆祝
 //   收据: 引擎那行 (TurnDuration) 的外层是 width 100%, 和收据并排时两边按比例挤, 收据被推到最右边还截短;
 //     现在按引擎那行字的宽度给它定宽, 收据紧跟在后面, 放不下先省 "改 N 个文件", 最后才截
-//   工具道具: 工具只跑几十毫秒时, 散步道的帧钟 (150ms) 可能一次也看不到它; 改成按工具序号认, 每次至少做 4 帧
 //
 // v0.16.4 (按第四次实测改):
 //   收据: 引擎节点的祖先 Box 不能带 width / height / minWidth / minHeight / display / overflow / position /
@@ -98,25 +77,34 @@ export type { Mood } from './sprites'
 //   "搞定" 改成纯防抖: 主线程一段结束、$.agent.list() 里没有在跑的子代理 -> 等 2 秒; 这 2 秒里来了 turn.start
 //     或 prompt.submit 就取消; 这一段结束前 2 秒内有子代理刚结束 -> 多等 2 秒 (只延一次); 不再记 "欠几次通知"
 //   调试: 环境变量 USAGE_HUD_DEBUG=1 时, 把提问 / 每段 / 子代理 / prompt.submit / 防抖的事件带时间写进 debug 日志
-//   工具道具: 散步道一收到新的工具序号就画 (不等下一帧), 从那一刻起至少 600ms
 //
-// v0.15 散步道 v2:
-//   横栏放得下 3 行就画 3 行版: 大螃蟹用面板那套 12x6 画法 (走路腿交替、眼睛看前面、会眨眼、钳子偶尔夹一下,
-//     冒汗 / 慌张 / 庆祝 / 睡觉和面板一样); 小螃蟹 9x4 排队跟着走; 不够 3 行退到 2 行 / 1 行版
-//   大螃蟹一直有动静: 主会话或子代理在跑都走; 全闲时每 20-40 秒溜达几格再东张西望; 5 分钟没有任何动静才睡
-//   打字 -> 停下低头看输入框 (停手 1.5 秒恢复); 发出消息 -> 跳一下, 落地冒尘土
-//   粒子: 走路扬尘、小跑甩汗、庆祝金色闪光、睡觉冒泡泡、小螃蟹离场冒一团 (盲文点, 只画在空格子里, 最多 16 个)
-//   悬停: 只以大螃蟹的格子为悬停区域 -> 举钳打招呼 + 旁边冒一个用量摘要气泡 (不再盖住整个顶行)
-//   子代理看板只留引擎的 x 和 Esc 关闭
+// v0.17:
+//   没有 5 小时限制的账号 (2026-10 起通过验证的 Ultra): rateLimits 里只有 seven_day -> 不画 5小时 那格
+//     完整版第 2 行 = 上下文 | 本周 | 重置 (周几 时:分 + 配速); 中等版右列 = 上下文 / 本周 / 本会话; 精简版去掉 5小时 那段
+//     客户端仪表盘同样是 上下文 | 本周 | 重置; 判定存进 store (noFive), 下次启动第一次回复之前就按它画; five_hour 一出现就恢复
+// v0.17.3: 删掉螃蟹散步道 (v0.14-v0.16 的输入框上方横栏, Client 模块 walkway.tsx). 输入框一高横栏就被挤成 1 行半截, 也多占行;
+//   螃蟹回到面板左边 (v0.15 及以前的排法: 15x3 像素画, 右边 3 列是道具; 精简版 8x1 小螃蟹), 不额外占行;
+//   一轮结束: 面板螃蟹举钳跳 + 状态格 "✓ 上一轮 …"; 散步道才有的气泡 (搞定 / 慢点 / 等你点头 ...) 一起去掉. /hud crab off 不画螃蟹
+//   上方横栏终端什么都不画 (留给引擎和别的 mod)
+// v0.17.4: 散步道那些功能搬回面板, 不多占一行:
+//   状态格的事件 (以前的气泡): 搞定 / 慢点！…用完 / 上下文快满了 / 压缩完了 / 额度刷新了, 亮 5 秒 (noteNow); 干活时只换工具名
+//   子代理小螃蟹: 道具区右下角, 道具上移缩成 3 行高; 都结束后 1.5 秒淡出 (kidByeAt)
+//   你发出消息 -> 跳一下 (jumpAt); 后台结果送回不跳
+//   很短的工具: 至少拿着道具 TOOL_HOLD_MS (600ms), 工具之间不闪回 "思考中" (mainTool.until)
+//   没搬的: 悬停 (面板里拿不到指针) / 粒子和溜达 (螃蟹不走路) / "等你点头" (引擎不告诉我们你什么时候点了允许, 会一直挂着)
+// v0.17.5: 子代理小螃蟹换回 0.13 的 3x2 蹦跳画法; 打字时螃蟹不动 (只叫醒睡着的); needsFrame 不再抄 sprites 的帧号,
+//   改为算出这一帧的螃蟹和上次画的比 (lastCrab), 变了才重画
 //
-// 螃蟹各种状态怎么叠 (从高到低, 只有一个能决定 "姿势"):
-//   1. 庆祝 (一轮刚结束)       -> 举钳跳 + 闪光, 情绪标记暂时不画
-//   2. 工作中 (按工具做动作)   -> 动作照常; 情绪只叠小标记: 冒汗 = 头边汗滴, 慌张 = 头边汗滴和红色 "!" 交替闪
-//   3. 闲置 + 慌张             -> 双钳举起 + 左右发抖 + 右侧大 "!" (慌张会把睡着的螃蟹叫醒)
-//   4. 睡觉 (5 分钟没动)       -> 闭眼呼吸 + 泡泡 (冒汗时照样有汗滴)
-//   5. 闲置                    -> 眨眼/张望/挥手; 悠闲时改戴墨镜 (不眨眼不张望)
+// 螃蟹各种状态怎么叠 (从高到低, 只有一个能决定 "姿势"; 2-7 的先后在 sprites.ts 的 crabPose, 终端和客户端共用):
+//   1. 跳一下 (你刚发出消息)   -> 蹲 / 腾空 / 落地, 约 0.6 秒
+//   2. 庆祝 (一轮刚结束)       -> 举钳跳 + 闪光, 情绪标记暂时不画
+//   3. 工作中 (按工具做动作)   -> 动作照常; 情绪只叠小标记: 冒汗 = 头边汗滴, 慌张 = 头边汗滴和红色 "!" 交替闪
+//   4. 闲置 + 慌张             -> 双钳举起 + 左右发抖 + 右侧大 "!" (慌张会把睡着的螃蟹叫醒)
+//   5. 子代理在跑              -> 看着右下角的小螃蟹, 隔一会儿举钳给它加油打气
+//   6. 睡觉 (5 分钟没动)       -> 闭眼呼吸 + 泡泡 (冒汗时照样有汗滴)
+//   7. 闲置                    -> 眨眼/张望/挥手
 //   身体颜色永远只表示上下文 (>=80% 变红, >=95% 闪); 上下文 >=80% 也冒汗, 和情绪的汗滴是同一颗
-//   右侧 3 列 (x 12-14) 一律给道具/泡泡/闪光/大 "!" (v0.14 起子代理小螃蟹在散步道里, 不再占这里)
+//   右侧 3 列是道具区 (道具 / 泡泡 / 闪光 / 大 "!"), 有子代理时下面三行给小螃蟹: 细节见 sprites.ts 的 scenePx
 
 const LAYOUTS = ['full', 'compact', 'off'] as const
 type Layout = (typeof LAYOUTS)[number]
@@ -141,6 +129,8 @@ const MIN_ELAPSED_MS: Record<string, number> = { seven_day: 86400_000 }
 const PANIC_RUNOUT_MS = 30 * 60_000
 // 线性外推下 "配速 > 1" 就等于 "会在重置前用完", 稍微用快一点就报警太吵: 配速到 1.15 才算会用完
 const PACE_WARN = 1.15
+// 配速低于这个算宽裕 (悠闲): 重置那格的配速写绿色
+const PACE_CHILL = 0.8
 
 // ---------------- 会话状态 (模块变量) ----------------
 let layout: Layout = 'full'
@@ -150,11 +140,6 @@ let lastTurnMs = 0
 let lastTurnTools = 0
 let turnTools = 0
 let totalTools = 0
-let currentTool = ''
-// 主线程每用一次工具加 1, 连同工具种类推给散步道: 工具只跑几十毫秒时, 散步道 150ms 一帧的帧钟可能一次也看不到
-// currentTool, 按序号认就不会漏 (每次至少做 TOOL_HOLD_FRAMES 帧动作)
-let toolSeq = 0
-let toolLast: ToolKind | '' = ''
 let toolCounts: Record<string, number> = {}
 let effort = ''
 let modelId = ''
@@ -163,7 +148,24 @@ let project = ''
 let branch = ''
 let dirty = 0
 let celebrateUntil = 0
+// ---- 面板螃蟹的小动作 + 状态格里的事件 (v0.17.4: 散步道那些功能搬回面板) ----
+const TOOL_HOLD_MS = 600 // 每个工具至少做这么久的动作 (只跑几十毫秒的 Glob / Read 也看得见), 工具之间也不闪回 "思考"
+const NOTE_MS = 5000 // 状态格里的事件亮多久
+const KID_BYE_MS = 1500 // 子代理都结束后, 小螃蟹淡出多久
+// 主线程的工具: 在跑时 until = Infinity; 做完后 until = max(开始 + TOOL_HOLD_MS, 结束 + 2 帧), 到点前照样拿着道具
+let mainTool: { name: string; until: number } | undefined
+let jumpAt = -Infinity
+let kidByeAt = -Infinity
+// 终端面板上次画的螃蟹 (精简版那只 / 完整版那只 + encode 出来的 cells); needsFrame 拿它比这一帧会不会变. 没画螃蟹时 undefined
+let lastCrab: { mini: boolean; cells: string } | undefined
+let crabOn = true // /hud crab 开关 (存进 store): 关了面板里不画螃蟹, 网格占满整行
+type Note = { text: string; color: string; bold?: boolean; until: number }
+let note: Note | undefined
+const wasRunOut: Record<string, boolean> = {}
+const saidRunOut = new Set<string>() // 每个额度窗口只说一次 "慢点"
+let saidCtxFull = false
 let lastActive = 0
+const asleep = (now: number) => lastActive > 0 && now - lastActive > SLEEP_AFTER_MS // 螃蟹睡着了 (5 分钟没动静)
 let lastPct = 0
 // 客户端横栏的宽度 (格数), 记进 store 方便按实际截图校准像素换算
 let lastDesktopCols = 0
@@ -355,6 +357,15 @@ function durCoarse(ms: number): string {
   if (h < 24) return h + 'h'
   return Math.floor(h / 24) + 'd'
 }
+// 重置时刻 (本地时间): 今天 21:00 / 明天 05:00 / 周六 05:00
+const WEEKDAY = '日一二三四五六'
+export function whenAt(at: number, now: number): string {
+  const d = new Date(at)
+  const day0 = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
+  const days = Math.round((day0(d) - day0(new Date(now))) / 86400_000)
+  const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0')
+  return (days <= 0 ? '今天' : days === 1 ? '明天' : '周' + WEEKDAY[d.getDay()]) + ' ' + hm
+}
 // 大数: 999 / 12.3k / 4.56M / 345.4M / 2.26B
 function big(n: number): string {
   if (n < 1000) return String(Math.round(n))
@@ -386,13 +397,26 @@ export function paceOf(l: Limit | undefined, now: number): Pace | undefined {
   return { pct, ratio, runOutIn, resetIn, elapsedFrac, willRunOut: runOutIn < resetIn && ratio >= PACE_WARN }
 }
 
-const MOOD_RANK: Record<Mood, number> = { chill: 0, normal: 1, sweat: 2, panic: 3 }
+// ---------------- 没有 5 小时限制的账号 (v0.17) ----------------
+// 2026-10 起通过验证的 Ultra 账号没有 5 小时窗口, rateLimits 里只剩 seven_day; Max / Pro 照旧有
+// 判定: 有 seven_day 没有 five_hour -> 没有 5 小时; 有 five_hour -> 有; 都没有 (还没回复 / 不是订阅) -> 沿用上次的判定
+// 判定存进 store, 下次启动第一次回复之前就按上次的排法画, 不会先画一格 "--" 再收掉
+let noFive = false
+function hasFive($: any, limits: Limit[]): boolean {
+  const has5 = limits.some(l => l.kind === 'five_hour')
+  const v = has5 ? false : limits.some(l => l.kind === 'seven_day') ? true : noFive
+  if (v !== noFive) {
+    noFive = v
+    Promise.resolve($.store.set('noFive', v)).catch(() => {})
+  }
+  return !noFive
+}
+
+const MOOD_RANK: Record<Mood, number> = { normal: 0, sweat: 1, panic: 2 }
 function moodOne(p: Pace | undefined): Mood | undefined {
   if (!p) return undefined
   if (p.pct >= 95 || (p.willRunOut && (p.runOutIn ?? Infinity) <= PANIC_RUNOUT_MS)) return 'panic'
-  if (p.ratio === undefined) return 'normal'
-  if (p.ratio >= 1.2 || p.willRunOut) return 'sweat'
-  if (p.ratio < 0.8) return 'chill'
+  if ((p.ratio ?? 0) >= 1.2 || p.willRunOut) return 'sweat'
   return 'normal'
 }
 // 5小时 和 本周 里更紧张的那个; 两个都没有读数 (不是订阅账号) 就是 正常
@@ -510,7 +534,6 @@ const KAOMOJI: Record<string, string> = {
   hot: '(;o_o)',
   jump: '\\(^o^)/',
   sleep: '(-_-)zZ',
-  chill: '(B_B)',
   panic: '\\(O_O)/!',
 }
 function kaomoji(s: Scene): string {
@@ -520,7 +543,6 @@ function kaomoji(s: Scene): string {
   if (md === 'panic') return KAOMOJI.panic
   if (s.pct >= 80 || md === 'sweat') return KAOMOJI.hot
   if (s.sleeping) return KAOMOJI.sleep
-  if (md === 'chill') return KAOMOJI.chill
   return frame % 30 === 0 ? KAOMOJI.blink : KAOMOJI.idle
 }
 
@@ -837,7 +859,8 @@ function checkResets($: any, limits: Limit[], now: number) {
     if (w.armed && ((isFinite(w.resetAt) && now >= w.resetAt) || l.percentUsed < 5)) {
       w.armed = false
       $.ui.toast(`${name}额度已恢复，可以继续了`, { timeoutMs: 8000 })
-      sayNow('额度刷新了', now)
+      noteNow($, '✓ ' + name + '额度刷新了', GOOD, now)
+      celebrateUntil = Math.max(celebrateUntil, now + 1000)
     }
     if (l.percentUsed >= 30 && !(isFinite(at) && at <= now)) {
       w.armed = true
@@ -904,7 +927,11 @@ async function refreshAgents($: any, now: number) {
       kidEnded($, k, now, '列表里没了')
     }
   }
+  const before = agentsNow
   agentsNow = (list ?? []).filter((a: any) => a?.status === 'running').length
+  if (before > 0 && agentsNow === 0) {
+    kidByeAt = now // 子代理都结束了: 小螃蟹淡出
+  }
   agentsBusy = (list ?? []).filter((a: any) => BUSY.has(String(a?.status))).length
   pruneKids()
 }
@@ -972,13 +999,10 @@ async function endAsk($: any, token: number) {
   lastTurnMs = (q.lastEndAt || now) - q.startedAt
   lastTurnTools = q.mainTools
   celebrateUntil = now + (lastTurnMs > 180_000 ? 2600 : 1400)
-  celebSeq += 1
-  celebFrames = Math.round((celebrateUntil - now) / FRAME_MS)
-  sayNow('搞定 ' + dur(lastTurnMs), now)
+  noteNow($, '✓ 搞定 ' + dur(lastTurnMs), GOOD, now) // (它会重画)
   dbg($, now, `防抖触发: 搞定 ${dur(lastTurnMs)} (从提问开始到最后一段结束 ${lastTurnMs}ms)`)
   // 庆祝结束时再画一次, 让只有客户端的会话也能回到平常的样子
   $.clock.after(celebrateUntil - now + 100, () => redraw($))
-  redraw($)
 }
 
 // 调试日志: "[usage-hud] 2026-10-07T12:01:16.533Z 防抖开始 等 2000ms"; 不开就什么都不写
@@ -1031,11 +1055,12 @@ async function readEffortFromSettings($: any, force: boolean) {
 
 async function loadPrefs($: any) {
   try {
-    const l = await $.store.get('layout')
+    const [l, crab, five] = await Promise.all([$.store.get('layout'), $.store.get('crab'), $.store.get('noFive')])
     if (LAYOUTS.includes(l)) layout = l
     // v0.16: 终端版面板固定在输入框下方, store 里以前存的 position (测试曾写进过 above) 一律不读
-    // 散步道默认开; store 里没有记录也当开 (不沿用上一个会话模块里的值)
-    crabOn = (await $.store.get('crab')) !== false
+    // 螃蟹默认开; store 里没有记录也当开 (不沿用上一个会话模块里的值)
+    crabOn = crab !== false
+    noFive = five === true
   } catch {}
 }
 
@@ -1137,20 +1162,82 @@ async function checkForUpdate($: any) {
   }
 }
 
+// 状态格的事件 (以前是散步道的气泡): 亮 NOTE_MS, 新的顶掉旧的; 到点再画一次让它收起来
+const GOOD = hex(heat(0)) // 绿 (用量条冷端的颜色)
+const AMBER = hex(heat(0.6)) // 黄
+function noteNow($: any, text: string, color: string, now: number, bold = false) {
+  note = { text, color, bold, until: now + NOTE_MS }
+  $.clock.after(NOTE_MS + 50, () => redraw($))
+  redraw($)
+}
+const noteOn = (now: number) => (note && now < note.until ? note : undefined)
+// 配速第一次变成 "会用完" (每个窗口只说一次) / 上下文第一次到 COMPACT_AT -> 事件; 刚启动时第一次读数不算 "变成"
+function noteTalk($: any, now: number, pct: number | undefined, pairs: Array<[Limit | undefined, Pace | undefined]>) {
+  for (const [l, p] of pairs) {
+    if (!l || !p) continue
+    const prev = wasRunOut[l.kind]
+    wasRunOut[l.kind] = p.willRunOut
+    const key = l.kind + '|' + (l.resetsAt ?? '')
+    if (p.willRunOut && prev === false && p.runOutIn !== undefined && !saidRunOut.has(key)) {
+      saidRunOut.add(key)
+      noteNow($, '慢点！' + durShort(p.runOutIn) + '用完', WARN, now, true)
+    }
+  }
+  if (pct === undefined) return
+  if (pct >= COMPACT_AT && !saidCtxFull) {
+    saidCtxFull = true
+    noteNow($, '上下文快满了，可以压缩', AMBER, now)
+  }
+  if (pct < 50) saidCtxFull = false
+}
+// 状态格说什么 (终端和客户端共用, 各自再加上跳动条 / 计时 / 子代理个数):
+//   事件 (搞定 / 慢点 / 上下文快满 / 压缩完了 / 额度刷新) 亮 NOTE_MS, 优先于平常的状态; 干活时事件只替换工具名那段
+//   color 只有事件才给 (终端和客户端各按 tone 配自己的颜色)
+type Status = { text: string; tone: 'work' | 'agents' | 'idle'; color?: string; bold?: boolean }
+function statusOf(now: number, working: boolean): Status {
+  const ev = noteOn(now)
+  const tone = working ? 'work' : ev ? 'idle' : agentsNow ? 'agents' : 'idle'
+  if (ev) return { text: ev.text, tone, color: ev.color, bold: ev.bold }
+  if (working) return { text: toolLabel(shownTool(now)), tone }
+  if (agentsNow) return { text: '子代理在跑', tone }
+  if (lastTurnMs) return { text: '✓ 上一轮 ' + dur(lastTurnMs) + '，' + lastTurnTools + ' 次工具', tone }
+  return { text: '✓ 待命', tone }
+}
+// 正在做 (或刚做完, 还在 TOOL_HOLD_MS 里) 的主线程工具
+const shownTool = (now: number) => (mainTool && now < mainTool.until ? mainTool.name : '')
+// 面板螃蟹这一帧的处境 (终端和客户端共用)
+function sceneOf(working: boolean, now: number): Scene {
+  const hop = now - jumpAt
+  const bye = now - kidByeAt
+  return {
+    working,
+    kind: toolKind(shownTool(now)),
+    pct: lastPct,
+    celebrating: now < celebrateUntil,
+    sleeping: !working && asleep(now),
+    agents: agentsNow,
+    mood,
+    hop: hop >= 0 && hop < JUMP_FRAMES * FRAME_MS ? Math.floor(hop / FRAME_MS) : undefined,
+    kidBye: agentsNow === 0 && bye >= 0 && bye < KID_BYE_MS ? bye / KID_BYE_MS : undefined,
+  }
+}
+
+// 终端面板的螃蟹这一帧画成什么 (精简版 1 行那只 / 完整版 15x3 那只)
+const crabCells = (s: Scene, mini: boolean) => (mini ? encode(miniPx(s, frame), MINI_W, 1) : encode(scenePx(s, frame), SPRITE_W, 3))
+// buildView 画终端螃蟹时走这里, 顺便记下画了什么
+function termCrab(s: Scene, mini: boolean): string {
+  const cells = crabCells(s, mini)
+  lastCrab = { mini, cells }
+  return cells
+}
+
 function needsFrame(now: number): boolean {
   // 只有客户端: 每 15 秒刷新一次时钟, 其余靠事件 (工具开始/结束、一轮结束、用量变化) 触发
   if (!hasTerminal) return frame % 100 === 0
-  // 散步道的 props 变了 (比如冒了新气泡): 推一次 (散步道本身的动画在 Client 里, 不靠这里)
-  if (laneDirty) {
-    laneDirty = false
-    return true
-  }
-  if (engineWorking || tweening || agentsNow > 0 || lastPct >= 80 || mood === 'sweat' || mood === 'panic') return true
-  if (now < celebrateUntil + 2 * FRAME_MS) return true
-  if (lastActive > 0 && now - lastActive > SLEEP_AFTER_MS) return frame % 2 === 0
-  const cyc = frame % 160
-  if (frame % 30 <= 1) return true
-  if ((cyc >= 60 && cyc <= 77) || (cyc >= 120 && cyc <= 137)) return true
+  if (engineWorking || tweening) return true
+  // 螃蟹: 直接算这一帧会画成什么, 和上次画的不一样才重画 (眨眼、挥手、泡泡、跳一下、小螃蟹、汗滴 ... 的节奏都只在 sprites.ts 里)
+  if (lastCrab && crabCells(sceneOf(false, now), lastCrab.mini) !== lastCrab.cells) return true
+  if (agentsNow > 0) return frame % 2 === 0 // 状态格的跳动条两帧走一相
   return frame % 13 === 0
 }
 
@@ -1171,21 +1258,30 @@ async function snapshot($: any, working: boolean) {
   lastPct = pct ?? 0
   await syncAgents($, now)
   const limits = (u.rateLimits ?? []) as Limit[]
+  const showFive = hasFive($, limits)
   const five = limits.find(l => l.kind === 'five_hour')
   const week = limits.find(l => l.kind === 'seven_day')
   const p5 = paceOf(five, now)
   const pw = paceOf(week, now)
   mood = moodOf(p5, pw)
-  const scene: Scene = {
-    working,
-    kind: toolKind(currentTool),
-    pct: lastPct,
-    celebrating: now < celebrateUntil,
-    sleeping: !working && lastActive > 0 && now - lastActive > SLEEP_AFTER_MS,
-    agents: agentsNow,
-    mood,
+  noteTalk($, now, pct, [
+    [five, p5],
+    [week, pw],
+  ])
+  const scene = sceneOf(working, now)
+  return { now, u, ctxWindow, ctxTokens, pct, five, week, p5, pw, showFive, scene, tk: tokSum() }
+}
+
+// 没有 5 小时时第 3 格 (终端和客户端共用): 本周重置时刻 + 配速; 配速会用完 -> warn (红), 宽裕 -> ok (绿)
+const TONE_COLOR = { warn: WARN, ok: GOOD, dim: DIM } as const
+function resetInfo(week: Limit | undefined, pw: Pace | undefined, now: number): NonNullable<DashData['reset']> {
+  const at = week?.resetsAt ? Date.parse(week.resetsAt) : NaN
+  const r = pw?.ratio
+  return {
+    when: isFinite(at) ? whenAt(at, now) : '--',
+    pace: r === undefined ? '' : '配速 ' + r.toFixed(1) + 'x',
+    tone: pw?.willRunOut ? 'warn' : r !== undefined && r < PACE_CHILL ? 'ok' : 'dim',
   }
-  return { now, u, ctxWindow, ctxTokens, pct, five, week, p5, pw, scene, tk: tokSum() }
 }
 
 // ---------------- 客户端 (桌面 app) 版 ----------------
@@ -1196,20 +1292,18 @@ async function buildDesktop($: any, els: any, cols: number, working: boolean) {
   const { Box, Svg } = els
   const s = await snapshot($, working)
   // 会在重置前用完 -> "40m 用完" (红色), 否则只写重置倒计时 "1h20m"; tick = 窗口已过比例 (条上的时间刻度)
-  const limitMeter = (l: Limit | undefined, p: Pace | undefined): DashData['five'] =>
+  const limitMeter = (l: Limit | undefined, p: Pace | undefined): DashData['week'] =>
     p?.willRunOut && p.runOutIn !== undefined
       ? { pct: l?.percentUsed, extra: durShort(p.runOutIn) + ' 用完', warn: true, tick: p.elapsedFrac }
       : { pct: l?.percentUsed, extra: p?.resetIn !== undefined ? durShort(p.resetIn) : '', tick: p?.elapsedFrac }
   const ag = agentsNow ? `  +${agentsNow} 个子代理` : ''
   // 客户端只显示到分钟: 每秒变一次会让图片每秒重换一次
   const ran = s.now - turnStartedAt
-  const status: DashData['status'] = working
-    ? { text: toolLabel(currentTool) + (ran >= 60_000 ? '  ' + durShort(ran) : '') + ag, tone: 'work' }
-    : agentsNow
-      ? { text: agentsNow + ' 个子代理在跑', tone: 'agents' }
-      : lastTurnMs
-        ? { text: '✓ 上一轮 ' + dur(lastTurnMs) + '，' + lastTurnTools + ' 次工具', tone: 'idle' }
-        : { text: '✓ 待命', tone: 'idle' }
+  const st = statusOf(s.now, working)
+  const status: DashData['status'] = {
+    ...st,
+    text: st.tone === 'agents' ? agentsNow + ' 个' + st.text : st.text + (st.tone === 'work' ? (ran >= 60_000 ? '  ' + durShort(ran) : '') + ag : ''),
+  }
   const top = Object.entries(toolCounts)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 3)
@@ -1224,7 +1318,7 @@ async function buildDesktop($: any, els: any, cols: number, working: boolean) {
     session: dur(s.now - (s.u.startedAt ?? s.now)),
     cost: s.u.cost ? '$' + s.u.cost.usd.toFixed(2) : '',
     ctx: { pct: s.pct, extra: tok(s.ctxTokens) + ' / ' + tok(s.ctxWindow) },
-    five: limitMeter(s.five, s.p5),
+    ...(s.showFive ? { five: limitMeter(s.five, s.p5) } : { reset: resetInfo(s.week, s.pw, s.now) }),
     week: limitMeter(s.week, s.pw),
     status,
     tools: top,
@@ -1243,8 +1337,7 @@ async function buildDesktop($: any, els: any, cols: number, working: boolean) {
   // 螃蟹直接画在卡片上 (没有底板/边框); 当普通图片显示, SMIL 动画照样会动, 必须给明确宽高
   const crab = crabSvg(
     {
-      // 慌张会把睡着的螃蟹叫醒 (和终端版同一套优先级)
-      mode: sc.celebrating ? 'celebrate' : working ? 'work' : sc.sleeping && mood !== 'panic' ? 'sleep' : 'idle',
+      mode: crabPose(sc), // 姿势和终端版同一套先后
       kind: sc.kind,
       heat: lastPct >= 95 ? 'crit' : lastPct >= 80 ? 'hot' : 'ok',
       agents: Math.min(3, agentsNow),
@@ -1261,7 +1354,7 @@ async function buildDesktop($: any, els: any, cols: number, working: boolean) {
       </Box>
       {/* 估计的宽度偏大时, 这个容器允许仪表盘等比缩小, 不会被截断 */}
       <Box key="hud-d-dash" flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
-        <Svg key="dash-svg" source={dash} alt={`上下文 ${data.ctx.pct ?? '--'}%，5小时 ${data.five.pct ?? '--'}%，本周 ${data.week.pct ?? '--'}%`} />
+        <Svg key="dash-svg" source={dash} alt={`上下文 ${data.ctx.pct ?? '--'}%，` + (data.five ? `5小时 ${data.five.pct ?? '--'}%，` : '') + `本周 ${data.week.pct ?? '--'}%`} />
       </Box>
     </Box>
   )
@@ -1270,41 +1363,12 @@ async function buildDesktop($: any, els: any, cols: number, working: boolean) {
 async function buildView($: any, els: any, surface: string, W: number, working: boolean) {
   const { Box, Text, Button } = els
   const isTerm = surface === 'terminal'
-  const now = await $.clock.now()
-  engineWorking = working
-  tweening = false
-
-  let u: any = { context: { window: 0 }, rateLimits: [] }
-  try {
-    u = await $.session.usage()
-  } catch {}
-  // 刚恢复的会话还没有新回复时, 用恢复时记下的上下文大小先顶上
-  const ctxWindow: number | undefined = u.context?.window || undefined
-  const ctxTokens: number | undefined = u.context?.tokens ?? resumeCtx
-  const pct: number | undefined =
-    u.context?.percent ?? (resumeCtx !== undefined && ctxWindow ? Math.min(100, Math.round((resumeCtx / ctxWindow) * 100)) : undefined)
-  lastPct = pct ?? 0
-  const tk = tokSum()
+  // 取数和终端 / 客户端共用 (snapshot): 用量、上下文、子代理、额度配速、心情、事件、螃蟹的处境
+  const { now, u, ctxTokens, ctxWindow, pct, five, week, p5, pw, showFive, scene, tk } = await snapshot($, working)
   const tokenText =
     tokState === 'counting' || tokState === 'idle'
       ? '统计中..'
       : big(tokTotal(tk)) + (tokState === 'failed' ? ' 本次启动' : '  out ' + big(tk.output))
-  await syncAgents($, now)
-  const limits = (u.rateLimits ?? []) as Limit[]
-  const five = limits.find(l => l.kind === 'five_hour')
-  const week = limits.find(l => l.kind === 'seven_day')
-  const p5 = paceOf(five, now)
-  const pw = paceOf(week, now)
-  mood = moodOf(p5, pw)
-  const scene: Scene = {
-    working,
-    kind: toolKind(currentTool),
-    pct: lastPct,
-    celebrating: now < celebrateUntil,
-    sleeping: !working && lastActive > 0 && now - lastActive > SLEEP_AFTER_MS,
-    agents: agentsNow,
-    mood,
-  }
   const pulse = (l?: { percentUsed: number }) => (l && l.percentUsed >= 90 ? 0.25 * (1 + Math.sin(frame / 2)) : 0)
 
   const onModel = () => runSlash($, 'model')
@@ -1317,16 +1381,19 @@ async function buildView($: any, els: any, surface: string, W: number, working: 
   const showCompact = (pct ?? 0) >= COMPACT_AT
 
   const model = prettyModel(modelId)
-  const statusText = (max: number): { text: string; color: string } => {
-    if (working) {
+  // 状态格 (statusOf): 干活时前面是跳动条、后面是计时; 子代理在跑时前面也有跳动条
+  const st0 = statusOf(now, working)
+  const stColor = st0.color ?? (st0.tone === 'work' ? ACCENT : st0.tone === 'agents' ? VIOLET : DIM)
+  const statusText = (max: number): { text: string; color: string; bold?: boolean } => {
+    const one = (text: string) => ({ text, color: stColor, bold: st0.bold })
+    if (st0.tone === 'work') {
       // 放不下 "工具名 + 计时" 时 (比如精简版状态格后面还有 +N代理 按钮) 先省掉计时, 不在半截处截断
-      if (max < 15) return { text: eq(frame) + ' ' + clip(toolLabel(currentTool), Math.max(2, max - 4)), color: ACCENT }
+      if (max < 15) return one(eq(frame) + ' ' + clip(st0.text, Math.max(2, max - 4)))
       const room = max - 11
-      return { text: eq(frame) + ' ' + padR(clip(toolLabel(currentTool), room), room) + ' ' + padL(dur(now - turnStartedAt), 6), color: ACCENT }
+      return one(eq(frame) + ' ' + padR(clip(st0.text, room), room) + ' ' + padL(dur(now - turnStartedAt), 6))
     }
-    if (agentsNow) return { text: clip(eq(frame) + ' 子代理在跑', max), color: VIOLET }
-    if (lastTurnMs) return { text: clip('✓ 上一轮 ' + dur(lastTurnMs) + '，' + lastTurnTools + ' 次工具', max), color: DIM }
-    return { text: '✓ 待命', color: DIM }
+    // 子代理在跑时面板至少隔帧画一次 (needsFrame), 跳动条按半速走, 6 个相位都走得到
+    return one(clip(st0.tone === 'agents' ? eq(frame >> 1) + ' ' + st0.text : st0.text, max))
   }
   // 状态格: 文字 + (有子代理时) 末尾一个可点的 "+N代理" -> 子代理看板
   // 文字补齐到固定宽度, 按钮的位置在工作 / 闲置两态完全一样
@@ -1335,7 +1402,7 @@ async function buildView($: any, els: any, surface: string, W: number, working: 
     const room = agLabel ? Math.max(0, max - dw(agLabel) - 1) : max
     const st = statusText(room)
     const parts: any[] = [
-      <Text key="st" color={st.color}>
+      <Text key="st" color={st.color} bold={st.bold ? true : undefined}>
         {agLabel ? padR(clip(st.text, room), room) + ' ' : clip(st.text, room)}
       </Text>,
     ]
@@ -1343,19 +1410,24 @@ async function buildView($: any, els: any, surface: string, W: number, working: 
     return parts
   }
 
-  // v0.16: 终端面板不画螃蟹 (螃蟹在输入框上方的散步道里), 网格占满整行; 去掉螃蟹那 15+2 列后各档的分界跟着前移
-  //   (算法不变, 只是可用宽度多了 crabCols 列: 完整版从 96 列降到 79 列, 精简版从不到 66 列降到不到 49 列)
-  const crabCols = isTerm ? 0 : SPRITE_W + 2
+  // v0.17.2: 终端默认把螃蟹画回面板左边 (12 列螃蟹 + 3 列道具, 3 行; 和 v0.15 及以前一样), 不额外占行
+  //   完整版 96 列起, 中等版 66~95 列, 精简版不到 66 列 (换成 1 行的小螃蟹)
+  //   关掉螃蟹 (/hud crab off) 时面板里不画螃蟹, 网格占满整行 (各档分界前移 17 列)
+  const panelCrab = !isTerm || crabOn
+  if (isTerm && !crabOn) lastCrab = undefined // 不画螃蟹: needsFrame 不用再比
+  const crabCols = panelCrab ? SPRITE_W + 2 : 0
   // ---------- 精简版: 1 行 (终端不到 49 列, 或 /hud 切到精简) ----------
   if (layout === 'compact' || W - crabCols < 49) {
     const bw = W >= 120 ? 8 : W >= 100 ? 6 : 4
-    const crab = isTerm
+    const crab = !panelCrab
       ? []
-      : [
-          <Text key="crab-k" color={ACCENT}>
-            {kaomoji(scene)}
-          </Text>,
-        ]
+      : isTerm
+        ? [<els.Raster key="crab-mini" columns={MINI_W} rows={1} cells={termCrab(scene, true)} />]
+        : [
+            <Text key="crab-k" color={ACCENT}>
+              {kaomoji(scene)}
+            </Text>,
+          ]
     // 精简版没有附加文字那段: 会用完时百分比改成红色; 上下文 >=75% 时 "上下文" 标签换成 [压缩] (同样 6 列宽)
     // 5小时 / 本周 的条上照样画时间刻度
     const m = (key: string, lab: string, p: number | undefined, onPress: () => void, sh: number, pl: number, more: Partial<MeterOpts> = {}): Seg => {
@@ -1367,9 +1439,10 @@ async function buildView($: any, els: any, surface: string, W: number, working: 
       ? m('ctx', '压缩', pct, onCompact, working ? frame % (bw + 6) : -9, 0, { labelW: dw('上下文'), labelKey: 'btn-compact' })
       : m('ctx', '上下文', pct, onContext, working ? frame % (bw + 6) : -9, 0)
     const segs: Seg[] = [
-      ...(isTerm ? [] : [{ key: 'seg-crab', w: 9, prio: 0, parts: crab }]),
+      ...(panelCrab ? [{ key: 'seg-crab', w: isTerm ? MINI_W : 9, prio: 0, parts: crab }] : []),
       { ...ctxSeg, prio: 1 },
-      { ...m('h5', '5小时', five?.percentUsed, onUsage, -9, pulse(five), limOpts(p5)), prio: 2 },
+      // 没有 5 小时限制的账号: 这段不画, 后面的段往前挪
+      ...(showFive ? [{ ...m('h5', '5小时', five?.percentUsed, onUsage, -9, pulse(five), limOpts(p5)), prio: 2 }] : []),
       { ...m('wk', '本周', week?.percentUsed, onUsage, -9, pulse(week), limOpts(pw)), prio: 3 },
       {
         key: 'seg-model',
@@ -1499,9 +1572,27 @@ async function buildView($: any, els: any, surface: string, W: number, working: 
       shimmerAt: working ? (frame % (bw + 8)) - 2 : -9,
       pulse: 0,
     }),
-    limMeter('h5', '5小时', five, p5, x5),
+    ...(showFive ? [limMeter('h5', '5小时', five, p5, x5)] : []),
     limMeter('wk', '本周', week, pw, xw),
   ]
+  // 没有 5 小时限制 (完整版): 第 2 行 = 上下文 | 本周 | 重置 (和别的格子一样宽)
+  //   重置那格: 本周额度什么时候重置 + 配速, 写法和颜色规矩和客户端那格同一份 (resetInfo)
+  const resetCell = () => {
+    const r = resetInfo(week, pw, now)
+    const room = inner - dw(r.when)
+    return [
+      ...label(els, 'btn-reset', '重置', LABEL_W, onUsage),
+      <Text key="rs-t" color={VALUE}>
+        {clip(r.when, inner)}
+      </Text>,
+      <Text key="rs-p" color={TONE_COLOR[r.tone]} bold={r.tone === 'warn' ? true : undefined}>
+        {r.pace && room >= dw(r.pace) + 2 ? '  ' + r.pace : ''}
+      </Text>,
+    ]
+  }
+
+  // 没有 5 小时: 空出来的第 3 格, 完整版放 "重置", 中等版放本会话 (中等版本来放不下本会话, 这下正好)
+  if (!showFive) r2.push(nCols === 3 ? resetCell() : r1[2])
 
   // 第 3 行
   const top = Object.entries(toolCounts)
@@ -1529,15 +1620,8 @@ async function buildView($: any, els: any, surface: string, W: number, working: 
     ],
   ]
 
-  // 中等版: 左列放文字 (模型 / 项目 / 状态), 右列放三根用量条
-  const rows =
-    nCols === 3
-      ? [r1, r2, r3]
-      : [
-          [r1[0], r2[0]],
-          [r1[1], r2[1]],
-          [r3[0], r2[2]],
-        ]
+  // 中等版: 左列放文字 (模型 / 项目 / 状态), 右列放第 2 行那三格
+  const rows = nCols === 3 ? [r1, r2, r3] : [[r1[0], r2[0]], [r1[1], r2[1]], [r3[0], r2[2]]]
 
   const gridRow = (key: string, cells: any[][]) => (
     <Box key={key} flexDirection="row" columnGap={GAP} height={1}>
@@ -1545,17 +1629,21 @@ async function buildView($: any, els: any, surface: string, W: number, working: 
     </Box>
   )
 
-  // 终端: 只有网格; 其他界面照旧左边放颜文字
-  const sprite = isTerm ? null : (
+  // 螃蟹: 终端是像素画 (按工具做动作, 右边 3 列是道具: 纸 / 终端 / 地球 / 齿轮 ...); 其他界面是颜文字
+  const sprite = !panelCrab ? null : (
     <Box key="sprite" width={SPRITE_W} flexShrink={0} height={3}>
-      <Text key="crab-k" color={ACCENT}>
-        {kaomoji(scene)}
-      </Text>
+      {isTerm ? (
+        <els.Raster key="crab" columns={SPRITE_W} rows={3} cells={termCrab(scene, false)} />
+      ) : (
+        <Text key="crab-k" color={ACCENT}>
+          {kaomoji(scene)}
+        </Text>
+      )}
     </Box>
   )
 
   return (
-    <Box key="hud" flexDirection="row" columnGap={isTerm ? 0 : 2} paddingLeft={marginL} paddingRight={marginR}>
+    <Box key="hud" flexDirection="row" columnGap={sprite ? 2 : 0} paddingLeft={marginL} paddingRight={marginR}>
       {sprite}
       <Box key="info" flexDirection="column" width={A} flexShrink={0}>
         {gridRow('r1', rows[0])}
@@ -1566,116 +1654,6 @@ async function buildView($: any, els: any, surface: string, W: number, working: 
   )
 }
 
-// ---------------- 螃蟹散步道: hooks 这边 (v0.16 起散步道本身在 Client 模块 walkway.tsx 里走) ----------------
-// hooks 只把处境当 props 传进去 (忙不忙、心情、工具、上下文 %、子代理、事件气泡、打字 / 发送 / 庆祝的序号、用量摘要);
-// 位置、小螃蟹、粒子、走路、悬停停下都由模块自己用帧钟推进, hooks 不用为散步道每帧重画
-const TIPS = ['/hud agents 打开子代理看板', '/hud crab 关掉或打开散步的螃蟹', '/hud 切换 完整 / 精简 / 隐藏']
-let crabOn = true // /hud crab 开关 (存进 store)
-let laneDirty = false // 散步道的 props 变了 (比如冒了新气泡), 下一帧推一次
-let typeSeq = 0 // 打字 (prompt.edit) 的序号: 模块见到新序号就低头 1.5 秒
-let typePushedAt = 0 // 上次为打字重画的时间 (连着打字时约 0.4 秒推一次)
-let jumpSeq = 0 // 发出消息 (prompt.submit) 的序号: 模块见到新序号就跳一下
-let celebSeq = 0 // 一轮结束的序号 + 庆祝多少帧
-let celebFrames = 0
-let lastBusyAt = 0 // 最后一次 "有动静" (主会话 / 子代理 / 打字 / 发消息; 溜达不算) -> 模块据此算 5 分钟睡着
-type Say = { seq: number; text: string; color: string }
-let say: Say | undefined // 最近一条事件气泡; 模块按序号显示约 5 秒, 新的顶掉旧的
-let saySeq = 0
-const wasRunOut: Record<string, boolean> = {}
-const saidRunOut = new Set<string>() // 每个额度窗口只说一次 "慢点"
-let saidCtxFull = false
-
-function sayNow(text: string, now: number, color = VALUE) {
-  say = { seq: ++saySeq, text: '「' + text + '」', color }
-  laneDirty = true
-}
-
-// 悬停气泡的内容 = 用量摘要 + 一条小贴士: 上下文 68% · 5小时 10% 1h54m 重置 · 本周 3% · 小贴士 /hud agents ...
-// 给 Client 的是从长到短 4 种写法 + tipMin; 挑法 (tipFit) 和测试共用
-function laneTipParts(pct: number | undefined, five: Limit | undefined, week: Limit | undefined, p5: Pace | undefined, pw: Pace | undefined, now: number): { v: string[]; tipMin: number } {
-  const one = (name: string, l: Limit | undefined, p: Pace | undefined, withTime: boolean) =>
-    !l
-      ? ''
-      : name + ' ' + Math.round(l.percentUsed) + '%' +
-        (!withTime ? '' : p?.willRunOut && p.runOutIn !== undefined ? ' ' + durShort(p.runOutIn) + '用完' : p?.resetIn !== undefined ? ' ' + durShort(p.resetIn) + ' 重置' : '')
-  const sum = (withTime: boolean) => ['上下文 ' + (pct === undefined ? '--' : Math.round(pct) + '%'), one('5小时', five, p5, withTime), one('本周', week, pw, withTime)].filter(Boolean).join(' · ')
-  const tip = ' · 小贴士 ' + TIPS[Math.floor(now / 60000) % TIPS.length]
-  return { v: [sum(true) + tip, sum(false) + tip, sum(true), sum(false)], tipMin: dw(sum(false) + ' · 小贴士 /hud ') + 3 }
-}
-export function laneTip(pct: number | undefined, five: Limit | undefined, week: Limit | undefined, p5: Pace | undefined, pw: Pace | undefined, now: number): (room: number) => string {
-  const t = laneTipParts(pct, five, week, p5, pw, now)
-  return tipFit(t.v, t.tipMin)
-}
-
-// 气泡: 配速从正常变成会用完 (每个窗口只说一次) / 上下文第一次到 COMPACT_AT
-function noteTalk(now: number, pct: number | undefined, pairs: Array<[Limit | undefined, Pace | undefined]>) {
-  for (const [l, p] of pairs) {
-    if (!l || !p) continue
-    const prev = wasRunOut[l.kind]
-    wasRunOut[l.kind] = p.willRunOut
-    const key = l.kind + '|' + (l.resetsAt ?? '')
-    if (p.willRunOut && prev === false && p.runOutIn !== undefined && !saidRunOut.has(key)) {
-      saidRunOut.add(key)
-      sayNow('慢点！' + durShort(p.runOutIn) + '用完', now, WARN)
-    }
-  }
-  if (pct === undefined) return
-  if (pct >= COMPACT_AT && !saidCtxFull) {
-    saidCtxFull = true
-    sayNow('上下文快满了', now)
-  }
-  if (pct < 50) saidCtxFull = false
-}
-
-// 运行中的子代理 (按开始时间); 只认 SubagentStart 或 $.agent.list() 认过的
-const runningKids = () =>
-  [...kids.values()]
-    .filter(k => k.known && k.endedAt === undefined)
-    .sort((a, b) => a.startedAt - b.startedAt)
-    .map(k => k.id)
-
-// 散步道这一次画: 取用量 (心情 / 气泡 / 悬停摘要) 和子代理, 交给 Client; 渲染路径里不跑 git / 进程 / 文件
-async function walkwayView($: any, els: any, W: number, rows: Rows, sky: boolean, working: boolean) {
-  const now = await $.clock.now()
-  engineWorking = working
-  let u: any = {}
-  try {
-    u = await $.session.usage()
-  } catch {}
-  await syncAgents($, now)
-  const limits = (u.rateLimits ?? []) as Limit[]
-  const five = limits.find(l => l.kind === 'five_hour')
-  const week = limits.find(l => l.kind === 'seven_day')
-  const p5 = paceOf(five, now)
-  const pw = paceOf(week, now)
-  const pct: number | undefined = u.context?.percent
-  mood = moodOf(p5, pw)
-  noteTalk(now, pct, [
-    [five, p5],
-    [week, pw],
-  ])
-  const w = Math.min(W, 512)
-  const props: WalkProps = {
-    w,
-    rows,
-    sky,
-    working,
-    agents: runningKids(),
-    mood,
-    pct: pct ?? lastPct,
-    tool: currentTool ? toolKind(currentTool) : '',
-    toolSeq,
-    toolLast,
-    typeSeq,
-    jumpSeq,
-    celebSeq,
-    celebFrames,
-    ...(say ? { say } : {}), // props 里不能有 undefined
-    idleMs: lastBusyAt > 0 ? Math.max(0, now - lastBusyAt) : 0,
-    tip: laneTipParts(pct, five, week, p5, pw, now),
-  }
-  return <els.Client key="walkway" module="./walkway.tsx" props={props} width={w} height={rows + (sky ? 1 : 0)} />
-}
 
 // ---------------- 每轮收据 ----------------
 function lineCount(s: unknown): number {
@@ -1937,17 +1915,9 @@ async function buildAgentsPane($: any, els: any, W: number) {
 }
 
 // 测试用: 不经过界面, 直接画某个状态下的螃蟹和状态文字
-type PreviewOpts = { working?: boolean; pct?: number; agents?: number; frames?: number; mood?: Mood; celebrating?: boolean; sleeping?: boolean }
-function previewOne(tool: string, opts: PreviewOpts): Scene {
-  return {
-    working: opts.working ?? true,
-    kind: toolKind(tool),
-    pct: opts.pct ?? 30,
-    celebrating: opts.celebrating ?? false,
-    sleeping: opts.sleeping ?? false,
-    agents: opts.agents ?? 0,
-    mood: opts.mood,
-  }
+type PreviewOpts = Partial<Omit<Scene, 'kind'>> & { frames?: number }
+function previewOne(tool: string, { frames: _, ...opts }: PreviewOpts): Scene {
+  return { working: true, pct: 30, celebrating: false, sleeping: false, agents: 0, ...opts, kind: toolKind(tool) }
 }
 export function previewScene(tool: string, opts: PreviewOpts = {}) {
   const out: string[] = []
@@ -1970,14 +1940,21 @@ export function previewPixels(tool: string, opts: PreviewOpts = {}) {
     mini.push(miniPx(s, f))
   }
   frame = 0
-  return { big, mini, colors: { body: COL.body, kid: COL.kid, kidEye: COL.kidEye, kidLeg: COL.kidLeg, shades: COL.shades, sweat: COL.sweat, alarm: COL.alarm } }
+  return { big, mini }
 }
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await loadPrefs($)
-    // 散步道和气泡从头开始
-    say = undefined
+    // 状态格的事件和螃蟹的小动作从头开始
+    note = undefined
+    saidCtxFull = false
+    saidRunOut.clear()
+    for (const k of Object.keys(wasRunOut)) delete wasRunOut[k]
+    mainTool = undefined
+    jumpAt = -Infinity
+    kidByeAt = -Infinity
+    lastCrab = undefined
     // 一次提问的记账从头开始
     ask = undefined
     mainOpen = false
@@ -1994,12 +1971,8 @@ export const register: Register = on => {
       debugOn = false
     }
     await readClockLocale($)
-    saidCtxFull = false
-    saidRunOut.clear()
-    for (const k of Object.keys(wasRunOut)) delete wasRunOut[k]
     loadedVersion = await diskVersion($)
     lastActive = await $.clock.now()
-    lastBusyAt = lastActive
     try {
       modelId = await $.session.model()
     } catch {}
@@ -2019,8 +1992,6 @@ export const register: Register = on => {
       if (tick % 7 === 3 && ask && !ask.celebrated && !mainOpen && !endArmed) void syncAgents($, await $.clock.now())
       if (layout === 'off') return
       frame += 1
-      // 散步道在 Client 里自己走; 这里只记 "有动静" 的时间 (模块据此算 5 分钟睡着)
-      if (engineWorking || agentsNow > 0) lastBusyAt = await $.clock.now()
       if (needsFrame(await $.clock.now())) redraw($)
       if (frame % 400 === 7) void checkForUpdate($) // 约每 60 秒
       if (lastDesktopCols && lastDesktopCols !== savedDesktopCols) {
@@ -2033,7 +2004,7 @@ export const register: Register = on => {
     try {
       await $.command.register({
         name: 'hud',
-        description: '用量面板 (固定在输入框下方)：完整 → 精简 → 隐藏 循环；/hud agents 打开子代理看板，/hud crab 开关输入框上方散步的螃蟹',
+        description: '用量面板 (固定在输入框下方)：完整 → 精简 → 隐藏 循环；/hud agents 子代理看板，/hud crab 开关螃蟹',
         argumentHint: '[agents|crab]',
         immediate: true,
       })
@@ -2050,18 +2021,17 @@ export const register: Register = on => {
       await openAgents($, false)
       return { text: '已打开子代理看板（Esc 关闭）' }
     }
-    // /hud crab [on|off]: 输入框正上方的螃蟹散步道 (只在终端); 不带参数就切换
+    // /hud crab [on|off]: 面板左边的螃蟹 (只在终端); 不带参数就切换
     if (/^(crab|蟹|螃蟹)/.test(arg)) {
       const rest = arg.replace(/^(crab|蟹|螃蟹)\s*/, '')
       crabOn = /^(on|开|1)/.test(rest) ? true : /^(off|关|0)/.test(rest) ? false : !crabOn
       await $.store.set('crab', crabOn)
-      laneDirty = true
       redraw($)
-      return { text: crabOn ? '螃蟹散步道已打开（输入框正上方）' : '螃蟹散步道已关闭（/hud crab 再打开）' }
+      return { text: crabOn ? '螃蟹已打开（面板左边）' : '螃蟹已关闭（/hud crab 再打开）' }
     }
-    // v0.16: 终端版面板固定在输入框下方, 螃蟹在上方; /hud top|bottom 不再挪面板, 也不写 store
+    // v0.17: 终端版面板和螃蟹都固定在输入框下方; /hud top|bottom 不再挪面板, 也不写 store
     if (/^(top|above|up|上)/.test(arg) || /^(bottom|below|down|下)/.test(arg)) {
-      return { text: '终端版面板固定在输入框下方，螃蟹在上方' }
+      return { text: '终端版面板和螃蟹都固定在输入框下方' }
     }
     layout = LAYOUTS[(LAYOUTS.indexOf(layout) + 1) % LAYOUTS.length]
     await $.store.set('layout', layout)
@@ -2200,12 +2170,11 @@ export const register: Register = on => {
   })
 
   on('tool.call', async ($, e, next) => {
-    if (!e.agentId) {
-      turnTools += 1
-      currentTool = e.tool
-      toolSeq += 1
-      toolLast = toolKind(e.tool)
-    }
+    // 主线程的工具: 至少做 TOOL_HOLD_MS 的动作 (只跑几十毫秒的工具在两帧之间就结束了, 不撑着一帧也画不出来);
+    //   开始时刻只取不等 (不推迟工具开始), 做完时再算 until
+    const mine = e.agentId ? undefined : (mainTool = { name: e.tool, until: Infinity })
+    const t0: Promise<number> | undefined = mine ? $.clock.now() : undefined
+    if (mine) turnTools += 1
     totalTools += 1
     toolCounts[e.tool] = (toolCounts[e.tool] ?? 0) + 1
     // 收据: 主线程一轮进行中, 所有线程 (含子代理) 的工具都算这一轮的
@@ -2234,7 +2203,8 @@ export const register: Register = on => {
       ran = await next(e)
       return ran
     } finally {
-      if (!e.agentId) currentTool = '' // (工具刚结束时散步道的螃蟹还会多做 4 帧动作, 在模块里算)
+      // 做完再撑一小会 (连着几个工具之间不闪回 "思考中"); 读时钟不等, 不推迟工具结果
+      if (mine && t0) void Promise.all([t0, $.clock.now()]).then(([a, b]) => (mine.until = Math.max(a + TOOL_HOLD_MS, b + 2 * FRAME_MS)))
       if (kid) kid.lastAt = await $.clock.now()
       // 改文件只算真的改成了的 (没被拒、没报错)
       const edited = ran && !ran.deny && !ran.isError && toolKind(String(e.tool)) === 'edit'
@@ -2288,7 +2258,7 @@ export const register: Register = on => {
       }
       engineWorking = false
       mainOpen = false
-      currentTool = ''
+      mainTool = undefined
       lastActive = now
       // 这次提问做没做完: 子代理都结束了、等一小会儿没有新的一段才算 (见 armEnd / endAsk)
       await refreshAgents($, now)
@@ -2348,27 +2318,23 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // 用户在输入框打字: 螃蟹停下低头看输入框, 最后一次按键后约 1.5 秒恢复 (只改序号; 连着打字时约 0.4 秒推一次 props)
+  // 你在打字: 只算 "有动静", 睡着的螃蟹马上醒 (客户端的螃蟹没有逐帧比较, 所以这里画一次); 时钟只取不等, 不挡按键回显
   on('prompt.edit', async ($, e, next) => {
-    const now = await $.clock.now()
-    typeSeq += 1
-    lastBusyAt = now
-    if (now - typePushedAt > 400 && crabOn && layout !== 'off') {
-      typePushedAt = now
-      redraw($)
-    }
+    void $.clock.now().then((now: number) => {
+      const wake = asleep(now)
+      lastActive = now
+      if (wake) redraw($)
+    })
     return next(e)
   })
   // 有消息送进会话 (v0.16.2 看 origin.kind):
   //   task-notification (后台子代理的结果送回来) = 同一次提问的延续; 其他来源 = 新提问, 上一次没做完的作废
-  //   跳一下只给用户自己发的 (终端回车 composer / 手机网页 bridge)
   on('prompt.submit', async ($, e, next) => {
     const kind = String((e as any).origin?.kind ?? 'composer')
     const now = await $.clock.now()
     dbg($, now, `prompt.submit origin=${kind}` + ((e as any).turnId ? ` (塞进正在跑的 ${(e as any).turnId})` : ' (闲着时)'))
     cancelEnd($, now, 'prompt.submit ' + kind)
     submitSinceTurn = kind
-    lastBusyAt = now
     if (kind === 'task-notification') {
       // 后台子代理的结果: 同一次提问的延续
     } else if ((e as any).turnId) {
@@ -2382,57 +2348,29 @@ export const register: Register = on => {
       askFromNext = false
       dbg($, now, '提问开始')
     }
+    // 你自己发出的消息 (终端回车 / 手机网页): 螃蟹跳一下; 后台子代理送回的结果不跳
     if (kind === 'composer' || kind === 'bridge') {
-      jumpSeq += 1
-      if (crabOn && layout !== 'off') redraw($)
+      jumpAt = now
+      if (crabOn && layout !== 'off') redraw($) // 第 0 帧马上画, 后面几帧由 needsFrame 的逐帧比较接上
     }
     return next(e)
   })
 
-  // 压缩完成 -> 气泡 "压缩完了" (主会话的; 预先算好备用的 precompute 不算)
+  // 压缩完成 (主会话的; 预先算好备用的 precompute 不算) -> 状态格亮 "压缩完了"
   on('session.compact', async ($, e, next) => {
     const r: any = await next(e)
     if (!(e as any).agentId && e.trigger !== 'precompute' && r && !r.skip) {
       saidCtxFull = false
-      sayNow('压缩完了', await $.clock.now())
+      noteNow($, '✓ 压缩完了', GOOD, await $.clock.now())
     }
     return r
   })
 
-  // 等你批准权限 -> 气泡 "等你点头"
-  //   classic.PermissionRequest: 要弹权限框了; 下面的 settings hook 已经替你决定 (带 decision) 就不说
-  //   classic.Notification 的 permission_prompt: 引擎发出 "需要你批准" 的通知
-  //   (不用 tool.check 的 ask: auto 模式下 ask 先交给分类器, 不一定会问你)
-  on('classic.PermissionRequest', async ($, e, next) => {
-    const r: any = await next(e)
-    if (!r?.decision && !r?.hookSpecificOutput?.decision) sayNow('等你点头', await $.clock.now())
-    return r
-  })
-  on('classic.Notification', async ($, e, next) => {
-    if (String((e as any).notification_type ?? '') === 'permission_prompt') sayNow('等你点头', await $.clock.now())
-    return next(e)
-  })
-
-  // 输入框上方的横栏:
-  //   客户端 -> 客户端专用的 SVG 面板 (客户端只用这一处)
-  //   终端   -> 螃蟹散步道 (/hud crab 开关); 面板固定在输入框下方 (PromptHint)
+  // 输入框上方的横栏: 只有客户端用 (客户端专用的 SVG 面板); 终端什么都不画 (面板和螃蟹都在输入框下方)
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (layout === 'off' || e.props.hasSurvey) return next(e)
-    if (e.surface === 'desktop') {
-      const els: any = $.ui.resolve(e)
-      return buildDesktop($, els, e.props.bodyColumns ?? 100, !!e.props.isWorking)
-    }
-    if (e.surface !== 'terminal') return next(e)
-    // bodyColumns 已经扣掉引擎右端放 [-] 的 5 格; maxRows = 这条横栏最多能占几行
-    // v0.16: 终端版这里只画散步道 (面板固定在输入框下方). 按 maxRows 退档:
-    //   >=4: 天空行 + 3 行版; 3: 天空行 + 2 行版; 2: 2 行版 (没有天空行); 1: 1 行版; 0: 不画
-    const W = e.props.bodyColumns ?? 100
-    const maxRows = e.props.maxRows ?? 0
-    const total = crabOn ? Math.min(4, maxRows) : 0
-    if (total < 1) return next(e)
-    const sky = total >= 3
-    const rows = (sky ? total - 1 : total) as Rows
-    return walkwayView($, $.ui.resolve(e), W, rows, sky, !!e.props.isWorking)
+    if (layout === 'off' || e.props.hasSurvey || e.surface !== 'desktop') return next(e)
+    const els: any = $.ui.resolve(e)
+    return buildDesktop($, els, e.props.bodyColumns ?? 100, !!e.props.isWorking)
   })
 
   // 终端面板固定在输入框下方: 面板在上, 引擎自己的提示行 (auto mode / esc to interrupt) 保留在下

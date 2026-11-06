@@ -3,10 +3,10 @@
 //   - dashSvg: 3 行 x 3 列的仪表盘, 自带深色底板, 浅色/深色主题下都看得清
 // 纯函数, 不调用 $
 
-export type CrabMode = 'idle' | 'work' | 'celebrate' | 'sleep'
-export type CrabKind = 'think' | 'read' | 'edit' | 'bash' | 'web' | 'agent' | 'other'
-export type CrabMood = 'chill' | 'normal' | 'sweat' | 'panic'
-export type CrabState = { mode: CrabMode; kind: CrabKind; heat: 'ok' | 'hot' | 'crit'; agents: number; mood?: CrabMood }
+import type { CrabPose, Mood, ToolKind } from './sprites'
+
+// mode = 大螃蟹的姿势, 和终端版同一套先后 (sprites.ts 的 crabPose)
+export type CrabState = { mode: CrabPose; kind: ToolKind; heat: 'ok' | 'hot' | 'crit'; agents: number; mood?: Mood }
 
 // warn: 预计重置前用完, 百分比和说明文字画成红色
 // tick: 窗口已过的比例 (0-1), 条上画一根亮色细竖线 (时间刻度); 不给就不画 (上下文那根没有)
@@ -19,9 +19,10 @@ export type DashData = {
   session: string
   cost: string
   ctx: Meter
-  five: Meter
+  five?: Meter // 没有 5 小时限制的账号 (v0.17) 不给: 第 2 行变成 上下文 | 本周 | 重置
   week: Meter
-  status: { text: string; tone: 'work' | 'agents' | 'idle' }
+  reset?: { when: string; pace: string; tone: 'warn' | 'ok' | 'dim' } // 没有 5 小时时第 3 格: 本周重置时刻 + 配速
+  status: { text: string; tone: 'work' | 'agents' | 'idle'; color?: string; bold?: boolean } // color / bold: 状态格事件 (搞定 / 慢点 ...)
   tools: string
   tokenTotal: string
   tokenOutput: string
@@ -43,8 +44,6 @@ const C = {
   sea: '#3b82f6',
   land: '#4ade80',
   gear: '#a1a1aa',
-  shades: '#09090b',
-  bridge: '#52525b',
   alarm: '#ef4444',
   kid: '#f2a07b', // 小螃蟹浅一号, 和大螃蟹分得开
   kidLeg: '#a4553d',
@@ -109,11 +108,11 @@ export function crabSvg(st: CrabState, scale = 6, tile?: { w: number; h: number 
   const working = st.mode === 'work'
   const nKids = Math.min(3, Math.max(0, st.agents))
   const zoneFree = nKids === 0 // 右侧有子代理时让给小螃蟹 (和终端版同一套规则)
-  // 闲置 (或睡着) 时慌张: 双钳举起 + 左右发抖, 睡着的也叫醒
-  const panicIdle = mood === 'panic' && (st.mode === 'idle' || st.mode === 'sleep')
-  const mode: CrabMode = panicIdle ? 'idle' : st.mode
-  const chill = mood === 'chill' && mode === 'idle'
-  const look = working && st.kind !== 'bash' && st.kind !== 'agent' ? 1 : 0
+  const mode = st.mode
+  const panicIdle = mode === 'panic' // 闲着时慌张: 双钳举起 + 左右发抖
+  const watching = mode === 'watch' // 主线程闲着、子代理在跑: 看着右边那几只小螃蟹, 隔一会儿举钳打气
+  // 眼睛往右看: 干活时看道具, 看着子代理时看小螃蟹
+  const look = (working && st.kind !== 'bash' && st.kind !== 'agent') || watching ? 1 : 0
 
   // 身体 (含颜色闪烁)
   const bodyAnim = st.heat === 'crit' ? steps('fill', [C.hot, C.body], 0.6) : ''
@@ -123,8 +122,8 @@ export function crabSvg(st: CrabState, scale = 6, tile?: { w: number; h: number 
   if (mode === 'celebrate' || panicIdle) parts.push(arm('L', 'up', body), arm('R', 'up', body))
   else if (working && st.kind === 'bash') parts.push(armSwap('L', body, 0.3, true), armSwap('R', body, 0.3, false))
   else if (working && st.kind === 'edit') parts.push(arm('L', 'out', body), armSwap('R', body, 0.3, true))
-  else if (mode === 'idle') {
-    // 每 12 秒挥一次右钳
+  else if (mode === 'idle' || watching) {
+    // 每 12 秒挥一次右钳 (看着子代理时就是给它打气)
     parts.push(arm('L', 'out', body))
     const v = ['1', '1', '1', '1', '1', '1', '1', '1', '1', '0', '1', '0']
     parts.push(`<g>${steps('opacity', v, 12)}${arm('R', 'out', body)}</g>`)
@@ -141,10 +140,7 @@ export function crabSvg(st: CrabState, scale = 6, tile?: { w: number; h: number 
   const eyesOpen = px(4 + look, 1, C.eye) + px(7 + look, 1, C.eye)
   const eyesShut = px(4 + look, 1, C.eyeShut) + px(7 + look, 1, C.eyeShut)
   if (mode === 'sleep') parts.push(eyesShut)
-  else if (chill) {
-    // 悠闲: 戴墨镜, 不眨眼不张望
-    parts.push(px(3, 1, C.shades, 2, 1), px(5, 1, C.bridge, 2, 1), px(7, 1, C.shades, 2, 1))
-  } else {
+  else {
     const blinkOpen = ['1', '1', '1', '1', '1', '1', '1', '1', '1', '1', '1', '1', '1', '1', '0']
     const glance = panicIdle ? moves(['-1 0', '1 0'], 0.3) : mode === 'idle' ? moves(['0 0', '0 0', '0 0', '0 0', '-1 0', '1 0', '0 0', '0 0'], 16) : ''
     parts.push(
@@ -335,11 +331,6 @@ export function dashSvg(d: DashData, opts: { width?: number; compact?: boolean }
   const cw = (W - gap * 2) / 3
   const cx = [0, cw + gap, (cw + gap) * 2]
   const LW = opts.compact ? 0 : 52 // 标签列宽: 三个汉字 + 间距
-  const meters = (row: number) =>
-    meterSvg(uid + 'a', cx[0], y(row), cw, '上下文', d.ctx, LW) +
-    meterSvg(uid + 'b', cx[1], y(row), cw, '5小时', d.five, LW) +
-    meterSvg(uid + 'c', cx[2], y(row), cw, '本周', d.week, LW)
-
   // 每列一个遮罩: 在列的右端渐隐
   const fade = 18 / cw
   const defs = [0, 1, 2]
@@ -353,6 +344,21 @@ export function dashSvg(d: DashData, opts: { width?: number; compact?: boolean }
   const cell = (c: number, row: number, label: string, runs: Run[]) =>
     `<g mask="url(#${uid}m${c})">${text(cx[c], y(row), label, T.muted, 12)}${flow(cx[c] + LW, y(row), runs)}</g>`
 
+  // 没有 5 小时: 第 3 格写本周重置时刻 + 配速 (精简版没有标签列, 只写值)
+  const resetSvg = (row: number): string => {
+    const r = d.reset
+    if (!r) return ''
+    const paceFill = r.tone === 'warn' ? C.warn : r.tone === 'ok' ? heat(0) : T.muted
+    const runs: Run[] = [[r.when, T.value, 600], r.pace ? ['   ' + r.pace, paceFill, r.tone === 'warn' ? 700 : 0] : null]
+    return opts.compact ? `<g mask="url(#${uid}m2)">${flow(cx[2], y(row), runs)}</g>` : cell(2, row, '重置', runs)
+  }
+
+  const meters = (row: number) =>
+    meterSvg(uid + 'a', cx[0], y(row), cw, '上下文', d.ctx, LW) +
+    (d.five
+      ? meterSvg(uid + 'b', cx[1], y(row), cw, '5小时', d.five, LW) + meterSvg(uid + 'c', cx[2], y(row), cw, '本周', d.week, LW)
+      : meterSvg(uid + 'c', cx[1], y(row), cw, '本周', d.week, LW) + resetSvg(row))
+
   let body = ''
   if (opts.compact) {
     body = meters(0)
@@ -360,7 +366,7 @@ export function dashSvg(d: DashData, opts: { width?: number; compact?: boolean }
     const effortIdx = EFFORTS.indexOf(d.effort)
     const effortColor = EFFORT_COLOR[d.effort] ?? T.muted
     const pips: Run[] = '▁▂▄▆█'.split('').map((ch, k) => [ch, k <= effortIdx ? effortColor : T.track])
-    const tone = d.status.tone === 'work' ? T.accent : d.status.tone === 'agents' ? T.violet : T.muted
+    const tone = d.status.color ?? (d.status.tone === 'work' ? T.accent : d.status.tone === 'agents' ? T.violet : T.muted)
     // 第 1 行: 模型 | 项目 | 本会话
     body += cell(0, 0, '模型', [[d.model, T.accent, 600], [' ', T.sep], ...pips, [' ' + (d.effort || '--'), effortColor, 600]])
     body += cell(1, 0, '项目', [[d.project, T.value, 600], d.branch ? ['  ' + d.branch, T.violet] : null])
@@ -368,7 +374,7 @@ export function dashSvg(d: DashData, opts: { width?: number; compact?: boolean }
     // 第 2 行: 三根用量条
     body += meters(1)
     // 第 3 行: 状态 | 工具 | token
-    body += cell(0, 2, '状态', [d.status.tone === 'idle' ? null : ['● ', tone], [d.status.text, tone, d.status.tone === 'idle' ? 0 : 600]])
+    body += cell(0, 2, '状态', [d.status.tone === 'idle' ? null : ['● ', tone], [d.status.text, tone, d.status.bold ? 700 : d.status.tone === 'idle' ? 0 : 600]])
     body += cell(1, 2, '工具', [[d.tools || '还没有', d.tools ? T.value : T.muted]])
     body += cell(2, 2, 'token', [[d.tokenTotal, T.value, 600], d.tokenOutput ? ['   out ', T.muted] : null, d.tokenOutput ? [d.tokenOutput, T.value] : null])
   }
