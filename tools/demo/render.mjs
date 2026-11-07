@@ -64,16 +64,20 @@ function findFfmpeg(tool = 'ffmpeg') {
 }
 
 // ---------------- 本地静态服务 (只读) ----------------
-// /vendor/desktop.js = usage-hud/hooks/desktop.ts 去掉类型标注后的原样代码 (客户端面板用真代码画)
+// /vendor/<名字>.js = usage-hud/hooks/<名字>.ts 去掉类型标注后的原样代码, 动图里画的就是插件里的那份:
+//   desktop = 客户端的 SVG 面板; sprites = 终端的像素螃蟹、工具分类、用量条配色; panel = 终端面板和子代理看板的排版、格式化、配速
+const VENDOR = new Set(['desktop', 'sprites', 'panel'])
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png' }
 function startServer() {
   const server = createServer((req, res) => {
     const url = new URL(req.url, 'http://x')
     try {
-      if (url.pathname === '/vendor/desktop.js') {
-        const ts = readFileSync(join(REPO, 'usage-hud', 'hooks', 'desktop.ts'), 'utf8')
+      const vendor = /^\/vendor\/(\w+)\.js$/.exec(url.pathname)?.[1]
+      if (vendor && VENDOR.has(vendor)) {
+        const ts = readFileSync(join(REPO, 'usage-hud', 'hooks', vendor + '.ts'), 'utf8')
         res.writeHead(200, { 'content-type': MIME['.js'], 'cache-control': 'no-store' })
-        res.end(stripTypeScriptTypes(ts))
+        // 插件里互相引用写的是 './sprites' (没有扩展名), 浏览器要 './sprites.js'
+        res.end(stripTypeScriptTypes(ts).replace(/from '\.\/(\w+)'/g, "from './$1.js'"))
         return
       }
       const file = normalize(join(HERE, decodeURIComponent(url.pathname)))
@@ -216,7 +220,7 @@ function extractCheck(name, gif) {
   const files = []
   for (const i of idx) {
     const f = join(dir, `${name}_f${String(i).padStart(3, '0')}.png`)
-    execFileSync(findFfmpeg(), ['-y', '-v', 'error', '-i', gif, '-vf', `select=eq(n\\,${i})`, '-vsync', '0', '-frames:v', '1', f])
+    execFileSync(findFfmpeg(), ['-y', '-v', 'error', '-i', gif, '-vf', `select=eq(n\\,${i})`, '-fps_mode', 'passthrough', '-frames:v', '1', f])
     files.push(f.slice(REPO.length + 1).replace(/\\/g, '/'))
   }
   return files

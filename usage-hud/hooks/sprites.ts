@@ -1,5 +1,6 @@
-// usage-hud: 螃蟹的像素画 (纯函数, 不碰 $), 给 hooks 模块 (register.tsx) 用
+// usage-hud: 螃蟹的像素画和面板配色 (纯函数, 不碰 $), 给 hooks 模块 (register.tsx) 用
 //   - 面板那只大螃蟹 (scenePx / miniPx): 按工具做动作、道具区、情绪
+//   - README 动图的脚本 (tools/demo) 也直接用这个文件 (render.mjs 去掉类型后放在 /vendor/sprites.js), 别引用别的模块
 
 export const FRAME_MS = 150
 export const SPRITE_W = 15 // 12 列螃蟹 + 3 列道具
@@ -39,6 +40,24 @@ export const COL = {
 export function mix(a: number, b: number, t: number): number {
   const ch = (s: number) => Math.round(((a >> s) & 255) * (1 - t) + ((b >> s) & 255) * t)
   return (ch(16) << 16) | (ch(8) << 8) | ch(0)
+}
+// 用量条的颜色: 0 绿 -> 0.6 黄 -> 1 红
+export function heat(t: number): number {
+  const g = 0x4ade80
+  const y = 0xfbbf24
+  const r = 0xf87171
+  return t < 0.6 ? mix(g, y, t / 0.6) : mix(y, r, Math.min(1, (t - 0.6) / 0.4))
+}
+
+// ---------------- 工具分类 (螃蟹按它做动作、拿道具) ----------------
+export function toolKind(t: string): ToolKind {
+  if (!t) return 'think'
+  if (/^(Read|Grep|Glob|LS|NotebookRead)$/.test(t)) return 'read'
+  if (/^(Edit|Write|MultiEdit|NotebookEdit)$/.test(t)) return 'edit'
+  if (/^(Bash|PowerShell|BashOutput|KillShell|Monitor)$/.test(t)) return 'bash'
+  if (/^(WebSearch|WebFetch)$/.test(t)) return 'web'
+  if (/^(Agent|Task|SendMessage)$/.test(t)) return 'agent'
+  return 'other'
 }
 
 // ---------------- 文字宽度 (中文/全角算 2 列) ----------------

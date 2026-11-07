@@ -21,8 +21,9 @@
 import { Grid, drawGrid, metrics, dw } from '../lib/cells.js'
 import { makeStage, termWindow, seg, easeOut, easeOutBack, typed, lerp } from '../lib/stage.js'
 import { transcript, inputBox, hint, spinner, C } from '../lib/claude.js'
-import { drawHud, easeAt, dur, receiptText } from '../lib/hud.js'
-import { FRAME_MS } from '../lib/crab.js'
+import { drawHud, easeAt } from '../lib/hud.js'
+import { dur, receiptText, hasFiveFrom } from '/vendor/panel.js'
+import { FRAME_MS } from '/vendor/sprites.js'
 
 const COLS = 128, ROWS = 28, CW = 8, CH = 16, SIZE = 13.65
 const W = 1200, H = 626
@@ -63,12 +64,13 @@ const COMPLETE = FINAL_END + 0.2
 const CELEBRATE_MS = 1400 // 一轮不到 3 分钟 -> 庆祝 1.4 秒 (源码)
 const FADE_AT = 17.6
 const CTX_WIN = 200_000
-const RESET5 = (2 * 3600 + 41 * 60 + 10) * 1000 // 第一次回复带回来的额度: 5小时 2h41m 后重置, 本周 3d6h 后重置
+// 第一次回复带回来的额度: 这个账号没有 5 小时窗口 (2026-10 起的 Max / Ultra), 只有本周, 3d6h 后重置
 const RESETW = (3 * 86400 + 6 * 3600 + 20 * 60) * 1000
 const iso = ms => new Date(ms).toISOString()
 // 这一轮的收据: 新会话 turn.start 时花费 $0, 结束时 $0.09; 没改文件; 工具 1 次
 const RECEIPT = receiptText({ usd: 0.09, files: 0, add: 0, del: 0, tools: 1 })
 
+// 某一时刻 usage-hud 看到的会话状态; 字段名就是 panel.ts 的 PanelInfo
 function hudState(t) {
   const fi = Math.max(0, Math.floor(((t - LAUNCH) * 1000) / FRAME_MS))
   const known = f => LAUNCH + (f * FRAME_MS) / 1000 >= STEP1
@@ -78,10 +80,11 @@ function hudState(t) {
   // 时间轴: 页面时间 t 秒 = 2026-10-06 06:00 之后 t 秒
   const now = Date.UTC(2026, 9, 6, 6, 0, 0) + t * 1000
   const L0 = Date.UTC(2026, 9, 6, 6, 0, 0) + STEP1 * 1000
+  const week = got ? { kind: 'seven_day', percentUsed: 41.2, resetsAt: iso(L0 + RESETW) } : undefined
   return {
     frame: fi, // 新会话: 帧计数从 0 开始
     working: t >= P_ENTER && !done,
-    currentTool: t >= STEP1 && t < READ_END ? 'Read' : '',
+    tool: t >= STEP1 && t < READ_END ? 'Read' : '',
     now,
     startedAt: now - (t - LAUNCH) * 1000,
     turnStartedAt: now - (t - P_ENTER) * 1000,
@@ -92,19 +95,22 @@ function hudState(t) {
     project: 'my-app',
     branch: 'main',
     dirty: 0,
-    costUsd: second ? 0.09 : got ? 0.06 : 0,
+    usd: second ? 0.09 : got ? 0.06 : 0,
     // 第一次回复之前还没有用量数据: 显示 --; 数据到了以后, 显示值从 0 起按源码的 ease() 追上去
-    // 有了额度读数后两个窗口的配速都不到 0.8 -> 情绪 "悠闲": 一轮结束回到闲置时螃蟹戴上墨镜
-    ctx: { pct: got ? 11 : undefined, tokens: got ? (second ? 22_800 : 21_400) : undefined, window: CTX_WIN },
-    five: got ? { kind: 'five_hour', percentUsed: second ? 23.6 : 23.4, resetsAt: iso(L0 + RESET5) } : undefined,
-    week: got ? { kind: 'seven_day', percentUsed: 41.2, resetsAt: iso(L0 + RESETW) } : undefined,
+    // 有了额度读数后本周的配速很宽裕: 情绪正常
+    pct: got ? 11 : undefined,
+    ctxTokens: got ? (second ? 22_800 : 21_400) : undefined,
+    ctxWindow: CTX_WIN,
+    week,
+    // 没有 5 小时: 刚装好、第一次回复之前插件还不知道 (也没有记下的判定, 按有 5 小时算), 先按有 5 小时的排法画 "--";
+    //   读数回来只有本周 -> 换成 上下文 | 本周 | 重置 (判定规则就是插件的 hasFiveFrom)
+    showFive: hasFiveFrom(week ? [week] : [], true),
     shown: {
       ctx: easeAt(f => (known(f) ? 11 : undefined), fi, 0),
-      h5: easeAt(f => (known(f) ? (LAUNCH + (f * FRAME_MS) / 1000 >= STEP2 ? 23.6 : 23.4) : undefined), fi, 0),
       wk: easeAt(f => (known(f) ? 41.2 : undefined), fi, 0),
     },
     // 刚启动: 会话记录文件还没写出来 -> 统计脚本找不到 -> 只显示本次启动以来的累计
-    tok: t < LAUNCH + 0.45 ? { state: 'counting' } : { state: 'failed', total: second ? 44_480 : got ? 21_520 : 0, output: second ? 260 : got ? 120 : 0 },
+    tokens: t < LAUNCH + 0.45 ? { state: 'counting', total: 0, output: 0 } : { state: 'failed', total: second ? 44_480 : got ? 21_520 : 0, output: second ? 260 : got ? 120 : 0 },
     toolCounts: t >= STEP1 ? { Read: 1 } : {},
     agents: 0,
     celebrating: done && (t - COMPLETE) * 1000 < CELEBRATE_MS,

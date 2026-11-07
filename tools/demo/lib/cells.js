@@ -1,38 +1,9 @@
-// 终端格子画布: 每格一个字符 + 前景色 + 背景色, 中文/全角占 2 格 (宽度规则照搬 usage-hud 的 isWide/dw/clip)
+// 终端格子画布: 每格一个字符 + 前景色 + 背景色, 中文/全角占 2 格 (宽度规则就是 usage-hud 的 isWide/dw)
 // 块字符 (▀▄▁..█)、框线 (─━│╭╮╰╯)、⎿ 用矩形/线段画, 保证相邻格无缝相接, 和 Windows Terminal 自绘的效果一致
 
-// ---------- 宽度 (与 usage-hud/hooks/register.tsx 相同) ----------
-export function isWide(cp) {
-  return (
-    (cp >= 0x1100 && cp <= 0x115f) ||
-    (cp >= 0x2e80 && cp <= 0xa4cf) ||
-    (cp >= 0xac00 && cp <= 0xd7a3) ||
-    (cp >= 0xf900 && cp <= 0xfaff) ||
-    (cp >= 0xfe30 && cp <= 0xfe4f) ||
-    (cp >= 0xff00 && cp <= 0xff60) ||
-    (cp >= 0xffe0 && cp <= 0xffe6)
-  )
-}
-export function dw(s) {
-  let w = 0
-  for (const ch of s) w += isWide(ch.codePointAt(0) ?? 0) ? 2 : 1
-  return w
-}
-export function clip(s, max) {
-  if (max <= 0) return ''
-  if (dw(s) <= max) return s
-  let out = ''
-  let w = 0
-  for (const ch of s) {
-    const cw = isWide(ch.codePointAt(0) ?? 0) ? 2 : 1
-    if (w + cw > max - 2) break
-    out += ch
-    w += cw
-  }
-  return out + '..'
-}
-export const padL = (s, n) => ' '.repeat(Math.max(0, n - dw(s))) + s
-export const padR = (s, n) => s + ' '.repeat(Math.max(0, n - dw(s)))
+// ---------- 宽度: 直接用插件的 (中文/全角占 2 格) ----------
+import { isWide, dw } from '/vendor/sprites.js'
+export { dw }
 
 export const hex = n => '#' + (n >>> 0).toString(16).padStart(6, '0').slice(-6)
 
@@ -87,7 +58,8 @@ export class Grid {
 }
 
 // ---------- 画到 canvas ----------
-const MONO = '"Cascadia Mono", "Microsoft YaHei", "Segoe UI Symbol", "Segoe UI Emoji", sans-serif'
+// Windows: Cascadia Mono + 微软雅黑; macOS 没有这两个时: Menlo + 苹方 (格子尺寸固定, 换字体只影响字形)
+const MONO = '"Cascadia Mono", Menlo, "Microsoft YaHei", "PingFang SC", "Segoe UI Symbol", "Segoe UI Emoji", "Apple Color Emoji", sans-serif'
 const widthCache = new Map()
 
 export function metrics(ctx, cw, ch, size) {

@@ -218,7 +218,9 @@ claude plugin test ./usage-hud
 
 ```
 usage-hud/
-  hooks/register.tsx        terminal panel and events
+  hooks/register.tsx        events, data, and drawing the panel as UI elements
+  hooks/panel.ts            terminal panel and subagent board layout, desktop card data (pure; the GIF scripts use it too)
+  hooks/sprites.ts          the pixel crab (pure; the GIF scripts use it too)
   hooks/desktop.ts          desktop panel (SVG)
   scripts/count-tokens.js   counts a session's tokens, subagents included
 html-shelf/

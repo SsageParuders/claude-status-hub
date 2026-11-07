@@ -216,7 +216,9 @@ claude plugin test ./usage-hud
 
 ```
 usage-hud/
-  hooks/register.tsx        终端面板和各种事件
+  hooks/register.tsx        各种事件、取数，把面板画成界面组件
+  hooks/panel.ts            终端面板和子代理看板的排版、客户端卡片的数据（纯函数，README 动图也直接用）
+  hooks/sprites.ts          像素螃蟹（纯函数，README 动图也直接用）
   hooks/desktop.ts          客户端面板（SVG）
   scripts/count-tokens.js   统计一个会话用掉的 token（含子代理）
 html-shelf/

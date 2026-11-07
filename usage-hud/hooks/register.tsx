@@ -1,25 +1,48 @@
 import type { Register } from 'claude-code'
-import { crabSvg, dashSvg, type DashData } from './desktop'
+import { crabSvg, dashSvg, deskLayout } from './desktop'
 import {
   FRAME_MS,
   JUMP_FRAMES,
   SPRITE_W,
   MINI_W,
-  DIM,
-  VALUE,
   WARN,
-  mix,
-  isWide,
+  toolKind,
   dw,
   clip,
   encode,
   scenePx,
   miniPx,
-  crabPose,
   type Mood,
-  type ToolKind,
   type Scene,
 } from './sprites'
+import {
+  CRAB_GAP,
+  COMPACT_AT,
+  KEEP_ENDED,
+  ACCENT,
+  GOOD,
+  AMBER,
+  safe,
+  dur,
+  durShort,
+  big,
+  easeStep,
+  toolLabel,
+  paceOf,
+  moodOf,
+  hasFiveFrom,
+  receiptText,
+  panelView,
+  agentsPaneView,
+  dashData,
+  deskCrab,
+  type Pace,
+  type Limit,
+  type Act,
+  type Part,
+  type PanelCell,
+  type PanelInfo,
+} from './panel'
 
 // usage-hud v0.5: 用量面板 (终端版 + 客户端版)
 //
@@ -113,24 +136,7 @@ const SLEEP_AFTER_MS = 5 * 60_000
 const PRESS_GAP_MS = 800 // 双击只算一次
 const COST_MILESTONES = [5, 10, 20, 50, 100, 200, 500, 1000]
 const USAGE_URL = 'https://claude.ai/settings/usage'
-const LABEL_W = 6
-const GAP = 3
-const HPAD = 2 // 面板左右各留的空格数
-const COMPACT_AT = 75 // 上下文到这个百分比出现 [压缩] 按钮
-const STUCK_MS = 5 * 60_000 // 子代理运行中超过这么久没有工具动作 -> "可能卡住"
 const AGENTS_PANE = 'hud-agents'
-const KEEP_ENDED = 10 // 看板里保留最近结束的子代理个数
-// 额度窗口长度
-const WINDOW_MS: Record<string, number> = { five_hour: 5 * 3600_000, seven_day: 7 * 86400_000 }
-// 窗口刚开始时外推不可靠, 已过时间不够就不算配速 (不报警、不影响情绪):
-//   5小时 = 窗口的 2% (6 分钟); 本周 = 满 1 天 (一周开头几个小时的用量起伏大, 按它外推会早早报警)
-const MIN_ELAPSED_FRAC = 0.02
-const MIN_ELAPSED_MS: Record<string, number> = { seven_day: 86400_000 }
-const PANIC_RUNOUT_MS = 30 * 60_000
-// 线性外推下 "配速 > 1" 就等于 "会在重置前用完", 稍微用快一点就报警太吵: 配速到 1.15 才算会用完
-const PACE_WARN = 1.15
-// 配速低于这个算宽裕 (悠闲): 重置那格的配速写绿色
-const PACE_CHILL = 0.8
 
 // ---------------- 会话状态 (模块变量) ----------------
 let layout: Layout = 'full'
@@ -291,158 +297,19 @@ type Kid = {
 }
 const kids = new Map<string, Kid>()
 
-// ---------------- 颜色 (螃蟹的颜色 COL 在 sprites.ts) ----------------
-const TRACK = 0x3f3f46
-const TICK = 0xe5e5e5 // 用量条上的时间刻度 │: 绿/黄/红的彩色段和暗色段里都看得清
-const ACCENT = '#d97757'
-const VIOLET = '#a78bfa'
-const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
-const EFFORT_COLOR: Record<string, string> = {
-  low: '#a1a1aa',
-  medium: '#60a5fa',
-  high: '#fbbf24',
-  xhigh: '#fb923c',
-  max: '#f87171',
-}
-
-const hex = (n: number) => '#' + n.toString(16).padStart(6, '0')
-function heat(t: number): number {
-  const g = 0x4ade80
-  const y = 0xfbbf24
-  const r = 0xf87171
-  return t < 0.6 ? mix(g, y, t / 0.6) : mix(y, r, Math.min(1, (t - 0.6) / 0.4))
-}
-
-// 外部来的名字只留安全字符, 其余换成 ?
-function safe(s: string): string {
-  let out = ''
-  for (const ch of s) {
-    const cp = ch.codePointAt(0) ?? 63
-    out += (cp >= 0x20 && cp <= 0x7e) || (cp >= 0xc0 && cp <= 0x24f) || isWide(cp) ? ch : '?'
-  }
-  return out
-}
-const padL = (s: string, n: number) => ' '.repeat(Math.max(0, n - dw(s))) + s
-const padR = (s: string, n: number) => s + ' '.repeat(Math.max(0, n - dw(s)))
-
-function prettyModel(id: string): string {
-  const m = id.match(/(opus|sonnet|haiku|fable)[-_ ]?(\d+)(?:[-_.](\d{1,2}))?/i)
-  if (!m) return safe(id) || '--'
-  const name = m[1][0].toUpperCase() + m[1].slice(1).toLowerCase()
-  return name + ' ' + m[2] + (m[3] ? '.' + m[3] : '') + (/\[1m\]/i.test(id) ? ' 1M' : '')
-}
-function dur(ms: number): string {
-  const s = Math.max(0, Math.round(ms / 1000))
-  if (s < 60) return s + 's'
-  const m = Math.floor(s / 60)
-  if (m < 60) return m + 'm' + String(s % 60).padStart(2, '0') + 's'
-  const h = Math.floor(m / 60)
-  if (h < 24) return h + 'h' + String(m % 60).padStart(2, '0') + 'm'
-  return Math.floor(h / 24) + 'd' + (h % 24) + 'h'
-}
-// 重置倒计时, 最多 5 列: 45m / 3h05m / 15h / 1d18h
-function durShort(ms: number): string {
-  const m = Math.max(0, Math.round(ms / 60000))
-  if (m < 60) return m + 'm'
-  const h = Math.floor(m / 60)
-  if (h < 10) return h + 'h' + String(m % 60).padStart(2, '0') + 'm'
-  if (h < 24) return h + 'h'
-  return Math.floor(h / 24) + 'd' + (h % 24) + 'h'
-}
-// 粗一点的时长, 最多 3 列: 40m / 13h / 4d (往下取整, 宁可说早); 给 "4d用完" 这种放进 7 列用
-function durCoarse(ms: number): string {
-  const m = Math.max(0, Math.floor(ms / 60000))
-  if (m < 60) return m + 'm'
-  const h = Math.floor(m / 60)
-  if (h < 24) return h + 'h'
-  return Math.floor(h / 24) + 'd'
-}
-// 重置时刻 (本地时间): 今天 21:00 / 明天 05:00 / 周六 05:00
-const WEEKDAY = '日一二三四五六'
-export function whenAt(at: number, now: number): string {
-  const d = new Date(at)
-  const day0 = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
-  const days = Math.round((day0(d) - day0(new Date(now))) / 86400_000)
-  const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0')
-  return (days <= 0 ? '今天' : days === 1 ? '明天' : '周' + WEEKDAY[d.getDay()]) + ' ' + hm
-}
-// 大数: 999 / 12.3k / 4.56M / 345.4M / 2.26B
-function big(n: number): string {
-  if (n < 1000) return String(Math.round(n))
-  if (n < 1e6) return (n / 1e3).toFixed(n < 1e4 ? 1 : 0) + 'k'
-  if (n < 1e9) return (n / 1e6).toFixed(n < 1e7 ? 2 : 1) + 'M'
-  return (n / 1e9).toFixed(2) + 'B'
-}
-// ---------------- 配速 (纯函数) ----------------
-// 已过时间 = 窗口长度 - (重置时刻 - 现在); 应用量 = 已过 / 窗口 x 100; 配速 = 实际用量 / 应用量
-// 预计用完 = 现在 + (100 - 实际用量) / (实际用量 / 已过时间)
-// 注意: 线性外推下 "会在重置前用完" 和 "配速 > 1" 是同一件事 (100 x 已过 < 用量 x 窗口)
-// elapsedFrac = 窗口已过的比例 (0-1), 用量条上的时间刻度画在这里; 窗口刚开始 (配速不外推) 时也有
-export type Pace = { pct: number; ratio?: number; runOutIn?: number; resetIn?: number; elapsedFrac?: number; willRunOut: boolean }
-type Limit = { kind: string; percentUsed: number; resetsAt?: string }
-
-export function paceOf(l: Limit | undefined, now: number): Pace | undefined {
-  if (!l || typeof l.percentUsed !== 'number') return undefined
-  const pct = l.percentUsed
-  const win = WINDOW_MS[l.kind]
-  const at = l.resetsAt ? Date.parse(l.resetsAt) : NaN
-  if (!win || !isFinite(at)) return { pct, willRunOut: false }
-  const resetIn = Math.max(0, at - now)
-  const elapsed = Math.min(win, win - resetIn)
-  const elapsedFrac = Math.max(0, Math.min(1, elapsed / win))
-  const minElapsed = MIN_ELAPSED_MS[l.kind] ?? win * MIN_ELAPSED_FRAC
-  if (pct < 1 || elapsed < minElapsed || resetIn <= 0) return { pct, resetIn, elapsedFrac, willRunOut: false }
-  const ratio = pct / ((elapsed / win) * 100)
-  const runOutIn = pct >= 100 ? 0 : (100 - pct) / (pct / elapsed)
-  return { pct, ratio, runOutIn, resetIn, elapsedFrac, willRunOut: runOutIn < resetIn && ratio >= PACE_WARN }
-}
+// 颜色、格式化 (时长 / 大数 / 模型名)、配速和情绪、工具中文名、面板排版都在 panel.ts (纯函数, README 动图也直接用)
 
 // ---------------- 没有 5 小时限制的账号 (v0.17) ----------------
 // 2026-10 起通过验证的 Ultra 账号没有 5 小时窗口, rateLimits 里只剩 seven_day; Max / Pro 照旧有
-// 判定: 有 seven_day 没有 five_hour -> 没有 5 小时; 有 five_hour -> 有; 都没有 (还没回复 / 不是订阅) -> 沿用上次的判定
-// 判定存进 store, 下次启动第一次回复之前就按上次的排法画, 不会先画一格 "--" 再收掉
+// 判定规则在 panel.ts 的 hasFiveFrom (README 动图也用); 判定存进 store, 下次启动第一次回复之前就按上次的排法画, 不会先画一格 "--" 再收掉
 let noFive = false
 function hasFive($: any, limits: Limit[]): boolean {
-  const has5 = limits.some(l => l.kind === 'five_hour')
-  const v = has5 ? false : limits.some(l => l.kind === 'seven_day') ? true : noFive
+  const v = !hasFiveFrom(limits, !noFive)
   if (v !== noFive) {
     noFive = v
     Promise.resolve($.store.set('noFive', v)).catch(() => {})
   }
   return !noFive
-}
-
-const MOOD_RANK: Record<Mood, number> = { normal: 0, sweat: 1, panic: 2 }
-function moodOne(p: Pace | undefined): Mood | undefined {
-  if (!p) return undefined
-  if (p.pct >= 95 || (p.willRunOut && (p.runOutIn ?? Infinity) <= PANIC_RUNOUT_MS)) return 'panic'
-  if ((p.ratio ?? 0) >= 1.2 || p.willRunOut) return 'sweat'
-  return 'normal'
-}
-// 5小时 和 本周 里更紧张的那个; 两个都没有读数 (不是订阅账号) 就是 正常
-export function moodOf(...paces: Array<Pace | undefined>): Mood {
-  const ms = paces.map(moodOne).filter((m): m is Mood => !!m)
-  if (!ms.length) return 'normal'
-  return ms.reduce((a, b) => (MOOD_RANK[b] > MOOD_RANK[a] ? b : a))
-}
-
-// 用量条后面那段. 规矩: 只有一个时间 = 重置倒计时 (暗色); 预计用完的时间一定带 "用完" 两个字 (红色)
-//   会用完 -> "4d12h用完", 放不下换粗一点的 "4d用完"; 还放不下就照常写暗色的重置倒计时, 只靠红色百分比提醒
-//   (以前放不下时只写红色的 "4d12h", 用户会以为是 4 天半后重置)
-function limitExtra(p: Pace | undefined, extraW: number): { text: string; warn: boolean } {
-  if (!p || p.resetIn === undefined) return { text: '', warn: false }
-  if (p.willRunOut && p.runOutIn !== undefined) {
-    for (const d of [durShort(p.runOutIn), durCoarse(p.runOutIn)]) {
-      if (dw(d + '用完') <= extraW) return { text: d + '用完', warn: true }
-    }
-  }
-  return { text: durShort(p.resetIn), warn: false }
-}
-// 时间刻度落在条的第几格: 已过比例 x 条长, 四舍五入, 夹在条里; 没有重置时间 -> -1 (不画)
-// 用四舍五入 (和彩色段的格数同一种取整): 用量正好跟上时间时, 彩色段的最后一格正好挨着刻度
-function tickCell(p: Pace | undefined, bw: number): number {
-  if (p?.elapsedFrac === undefined || bw <= 0) return -1
-  return Math.min(bw - 1, Math.max(0, Math.round(p.elapsedFrac * bw)))
 }
 
 function addTok(t: Tok, u: any) {
@@ -460,72 +327,16 @@ function tokSum(): Tok {
   }
 }
 const tokTotal = (t: Tok) => t.input + t.output + t.cacheRead + t.cacheWrite
-function tok(n: number | undefined): string {
-  if (n === undefined) return '--'
-  return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? Math.round(n / 1000) + 'k' : String(n)
-}
-function eq(f: number): string {
-  const H = '▁▂▃▄▅▆▇'
-  const wave = [0, 2, 4, 6, 4, 2]
-  return [0, 2, 4].map(o => H[wave[(f + o) % wave.length]]).join('')
-}
 // 数字滚动过渡
 function ease(key: string, target: number | undefined): number | undefined {
   if (target === undefined) return undefined
-  const cur = shown[key] ?? 0
-  const nxt = Math.abs(target - cur) < 0.6 ? target : cur + (target - cur) * 0.35
+  const nxt = easeStep(shown[key] ?? 0, target)
   shown[key] = nxt
   if (nxt !== target) tweening = true
   return nxt
 }
 
-// ---------------- 工具分类 ----------------
-function toolKind(t: string): ToolKind {
-  if (!t) return 'think'
-  if (/^(Read|Grep|Glob|LS|NotebookRead)$/.test(t)) return 'read'
-  if (/^(Edit|Write|MultiEdit|NotebookEdit)$/.test(t)) return 'edit'
-  if (/^(Bash|PowerShell|BashOutput|KillShell|Monitor)$/.test(t)) return 'bash'
-  if (/^(WebSearch|WebFetch)$/.test(t)) return 'web'
-  if (/^(Agent|Task|SendMessage)$/.test(t)) return 'agent'
-  return 'other'
-}
-const TOOL_CN: Record<string, string> = {
-  Read: '读文件',
-  Grep: '搜内容',
-  Glob: '找文件',
-  Edit: '改文件',
-  MultiEdit: '改文件',
-  Write: '写文件',
-  NotebookEdit: '改笔记本',
-  Bash: '跑命令',
-  PowerShell: '跑命令',
-  WebSearch: '搜网页',
-  WebFetch: '读网页',
-  Agent: '派子代理',
-  Task: '派子代理',
-  SendMessage: '发消息',
-  TodoWrite: '记待办',
-  Skill: '用技能',
-  ToolSearch: '找工具',
-}
-// MCP 工具名是 mcp__<服务>__<工具>, 服务名本身可能带下划线 (Claude_Browser), 所以按 "__" 拆
-function mcpParts(t: string): [string, string] | undefined {
-  if (!t.startsWith('mcp__')) return undefined
-  const rest = t.slice(5)
-  const cut = rest.indexOf('__')
-  return cut > 0 ? [rest.slice(0, cut), rest.slice(cut + 2)] : [rest, '']
-}
-// 统计行里的短名: MCP 工具只留服务名
-function shortTool(t: string): string {
-  return safe(mcpParts(t)?.[0] ?? t)
-}
-function toolLabel(t: string): string {
-  if (!t) return '思考中'
-  if (TOOL_CN[t]) return TOOL_CN[t]
-  const m = mcpParts(t)
-  return safe(m ? m[0] + ':' + m[1] : t)
-}
-
+// ---------------- 颜文字 (终端以外的界面用; 工具分类 toolKind 在 sprites.ts, 中文名 toolLabel 在 panel.ts) ----------------
 const KAOMOJI: Record<string, string> = {
   idle: '(o_o)',
   blink: '(-_-)',
@@ -544,161 +355,6 @@ function kaomoji(s: Scene): string {
   if (s.pct >= 80 || md === 'sweat') return KAOMOJI.hot
   if (s.sleeping) return KAOMOJI.sleep
   return frame % 30 === 0 ? KAOMOJI.blink : KAOMOJI.idle
-}
-
-// ---------------- 小部件 ----------------
-function label(els: any, key: string, text: string, width: number, onPress?: () => void): any[] {
-  const { Text, Button } = els
-  const pad = ' '.repeat(Math.max(0, width - dw(text)) + 1)
-  return onPress
-    ? [<Button key={key} label={text} plain dimColor onPress={onPress} />, <Text key={key + '-p'}>{pad}</Text>]
-    : [
-        <Text key={key} color={DIM}>
-          {text + pad}
-        </Text>,
-      ]
-}
-
-// tickAt: 时间刻度画在第几格 (-1 = 不画); 那一格的 ━ 换成亮色 │, 条的总宽度不变
-function barParts(els: any, key: string, pct: number | undefined, width: number, shimmerAt: number, pulse: number, tickAt = -1): any[] {
-  const { Text } = els
-  const p = pct === undefined ? 0 : Math.max(0, Math.min(100, pct)) / 100
-  // 只用整格: 半格字符在终端里会留一道缝 (实测)
-  const full = p > 0 ? Math.max(1, Math.round(p * width)) : 0
-  // 窗口刚开始、用量只占 1 格时, 刻度和那格彩色都在第 0 格: 刻度让到第 1 格, 彩色照样看得见
-  const tick = tickAt === 0 && full === 1 && width > 1 ? 1 : tickAt
-  const cells: any[] = []
-  for (let i = 0; i < width; i++) {
-    const lit = i < full
-    let ch = '━'
-    let col = lit ? heat(i / Math.max(1, width - 1)) : TRACK
-    if (lit && pulse > 0) col = mix(col, 0xffffff, pulse)
-    if (lit && Math.abs(i - shimmerAt) < 1) col = mix(col, 0xffffff, 0.6)
-    // 刻度最后定: 不跟着呼吸 / 流光变色, 彩色段和暗色段里都一样亮
-    if (i === tick) {
-      ch = '│'
-      col = TICK
-    }
-    cells.push(
-      <Text key={key + '-c' + i} color={hex(col)}>
-        {ch}
-      </Text>,
-    )
-  }
-  return cells
-}
-
-type MeterOpts = {
-  key: string
-  label: string
-  labelW: number
-  onPress: () => void
-  labelKey?: string // 标签按钮的 key (默认 btn-<key>)
-  pct?: number
-  pctColor?: string // 百分比的颜色 (默认按用量冷暖)
-  bw: number
-  extra: string
-  extraW: number
-  extraColor?: string
-  extraParts?: any[] // 自己画附加那段 (调用方保证正好 1 + extraW 列)
-  shimmerAt: number
-  pulse: number
-  tickAt?: number // 时间刻度在第几格 (tickCell 算; 不给 = 不画)
-}
-function meter(els: any, o: MeterOpts): any[] {
-  const { Text } = els
-  const shownPct = ease(o.key, o.pct)
-  const pctText = shownPct === undefined ? '--' : Math.round(shownPct) + '%'
-  const pctColor = o.pctColor ?? (o.pct === undefined ? DIM : hex(heat(Math.min(100, o.pct) / 100)))
-  const parts = [
-    ...label(els, o.labelKey ?? 'btn-' + o.key, o.label, o.labelW, o.onPress),
-    ...barParts(els, o.key, shownPct, o.bw, o.shimmerAt, o.pulse, o.tickAt ?? -1),
-    <Text key={o.key + '-pct'} color={pctColor} bold>
-      {' ' + padL(pctText, 4)}
-    </Text>,
-  ]
-  if (o.extraW > 0 && o.extraParts) parts.push(...o.extraParts)
-  else if (o.extraW > 0) {
-    parts.push(
-      <Text key={o.key + '-x'} color={o.extraColor ?? DIM} bold={o.extraColor ? true : undefined}>
-        {' ' + padR(clip(o.extra, o.extraW), o.extraW)}
-      </Text>,
-    )
-  }
-  return parts
-}
-
-// 上下文 >= 75%: 附加那段换成 [压缩] 按钮; 放得下 (>= 10 列) 就在前面留已用 token 数
-// 宽度和原来那段完全一样: 1 + extraW 列
-function compactParts(els: any, extraW: number, used: string, onCompact: () => void): any[] {
-  const { Text, Button } = els
-  const btn = '压缩'
-  if (extraW >= 10) {
-    return [
-      <Text key="cp-lead" color={DIM}>
-        {' ' + padR(clip(used, extraW - 5), extraW - 5) + ' '}
-      </Text>,
-      <Button key="btn-compact" label={btn} plain onPress={onCompact} />,
-    ]
-  }
-  return [<Text key="cp-lead"> </Text>, <Button key="btn-compact" label={btn} plain onPress={onCompact} />, <Text key="cp-pad">{' '.repeat(Math.max(0, extraW - dw(btn)))}</Text>]
-}
-const meterWidth = (o: { label: string; labelW: number; bw: number; extraW: number }) =>
-  Math.max(o.labelW, dw(o.label)) + 1 + o.bw + 5 + (o.extraW > 0 ? 1 + o.extraW : 0)
-
-// 档位: 五格保持彩色 (按钮不能上色), 档位文字做成按钮 -> /effort 打开档位滑块
-// room = 模型名后面还剩几列; 放不下时先把档位缩写 (medium -> med), 再放不下就只留缩写按钮不画五格
-// (以前窄的时候档位文字会被格子截掉; 现在它是点击目标, 要保证看得见)
-const EFFORT_SHORT: Record<string, string> = { low: 'low', medium: 'med', high: 'hi', xhigh: 'xhi', max: 'max' }
-function effortParts(els: any, key: string, onEffort: () => void, room = Infinity): any[] {
-  const { Button } = els
-  const word = effort ? clip(safe(effort), 6) : '--'
-  const short = EFFORT_SHORT[effort] ?? word
-  if (room < 6 + dw(word)) {
-    if (room < 6 + dw(short)) return [<Button key="btn-effort" label={short} plain onPress={onEffort} />]
-    return effortPips(els, key, short, onEffort)
-  }
-  return effortPips(els, key, word, onEffort)
-}
-function effortPips(els: any, key: string, word: string, onEffort: () => void): any[] {
-  const { Text, Button } = els
-  const i = EFFORTS.indexOf(effort)
-  const color = EFFORT_COLOR[effort] ?? DIM
-  const bars = '▁▂▃▅▇'
-  const parts: any[] = []
-  for (let k = 0; k < 5; k++) {
-    parts.push(
-      <Text key={key + '-e' + k} color={k <= i ? color : hex(TRACK)}>
-        {bars[k]}
-      </Text>,
-    )
-  }
-  parts.push(<Text key={key + '-ews'}> </Text>, <Button key="btn-effort" label={word} plain onPress={onEffort} />)
-  return parts
-}
-
-function cell(els: any, key: string, w: number, parts: any[]) {
-  const { Box } = els
-  return (
-    <Box key={key} width={w} flexShrink={0} flexDirection="row" overflow="hidden">
-      {parts}
-    </Box>
-  )
-}
-
-type Seg = { key: string; w: number; prio: number; parts: any[] }
-function fit(segs: Seg[], width: number, gap: number): Seg[] {
-  const order = segs.map((s, i) => ({ s, i })).sort((a, b) => a.s.prio - b.s.prio)
-  const keep = new Set<number>()
-  let total = 0
-  for (const { s, i } of order) {
-    const add = s.w + (keep.size ? gap : 0)
-    if (total + add <= width) {
-      keep.add(i)
-      total += add
-    }
-  }
-  return segs.filter((_, i) => keep.has(i))
 }
 
 // ---------------- 调用 $ 的动作 (必须是顶层函数) ----------------
@@ -1163,8 +819,6 @@ async function checkForUpdate($: any) {
 }
 
 // 状态格的事件 (以前是散步道的气泡): 亮 NOTE_MS, 新的顶掉旧的; 到点再画一次让它收起来
-const GOOD = hex(heat(0)) // 绿 (用量条冷端的颜色)
-const AMBER = hex(heat(0.6)) // 黄
 function noteNow($: any, text: string, color: string, now: number, bold = false) {
   note = { text, color, bold, until: now + NOTE_MS }
   $.clock.after(NOTE_MS + 50, () => redraw($))
@@ -1189,19 +843,6 @@ function noteTalk($: any, now: number, pct: number | undefined, pairs: Array<[Li
     noteNow($, '上下文快满了，可以压缩', AMBER, now)
   }
   if (pct < 50) saidCtxFull = false
-}
-// 状态格说什么 (终端和客户端共用, 各自再加上跳动条 / 计时 / 子代理个数):
-//   事件 (搞定 / 慢点 / 上下文快满 / 压缩完了 / 额度刷新) 亮 NOTE_MS, 优先于平常的状态; 干活时事件只替换工具名那段
-//   color 只有事件才给 (终端和客户端各按 tone 配自己的颜色)
-type Status = { text: string; tone: 'work' | 'agents' | 'idle'; color?: string; bold?: boolean }
-function statusOf(now: number, working: boolean): Status {
-  const ev = noteOn(now)
-  const tone = working ? 'work' : ev ? 'idle' : agentsNow ? 'agents' : 'idle'
-  if (ev) return { text: ev.text, tone, color: ev.color, bold: ev.bold }
-  if (working) return { text: toolLabel(shownTool(now)), tone }
-  if (agentsNow) return { text: '子代理在跑', tone }
-  if (lastTurnMs) return { text: '✓ 上一轮 ' + dur(lastTurnMs) + '，' + lastTurnTools + ' 次工具', tone }
-  return { text: '✓ 待命', tone }
 }
 // 正在做 (或刚做完, 还在 TOOL_HOLD_MS 里) 的主线程工具
 const shownTool = (now: number) => (mainTool && now < mainTool.until ? mainTool.name : '')
@@ -1242,8 +883,8 @@ function needsFrame(now: number): boolean {
 }
 
 // ---------------- 画面 ----------------
-// 终端版和客户端版共用的一次取数
-async function snapshot($: any, working: boolean) {
+// 终端版和客户端版共用的一次取数: 面板和客户端卡片的数据 (panel.ts 的 PanelInfo) + 螃蟹这一帧的处境
+async function snapshot($: any, working: boolean): Promise<{ info: PanelInfo; scene: Scene }> {
   const now = await $.clock.now()
   engineWorking = working
   tweening = false
@@ -1268,84 +909,45 @@ async function snapshot($: any, working: boolean) {
     [five, p5],
     [week, pw],
   ])
-  const scene = sceneOf(working, now)
-  return { now, u, ctxWindow, ctxTokens, pct, five, week, p5, pw, showFive, scene, tk: tokSum() }
-}
-
-// 没有 5 小时时第 3 格 (终端和客户端共用): 本周重置时刻 + 配速; 配速会用完 -> warn (红), 宽裕 -> ok (绿)
-const TONE_COLOR = { warn: WARN, ok: GOOD, dim: DIM } as const
-function resetInfo(week: Limit | undefined, pw: Pace | undefined, now: number): NonNullable<DashData['reset']> {
-  const at = week?.resetsAt ? Date.parse(week.resetsAt) : NaN
-  const r = pw?.ratio
-  return {
-    when: isFinite(at) ? whenAt(at, now) : '--',
-    pace: r === undefined ? '' : '配速 ' + r.toFixed(1) + 'x',
-    tone: pw?.willRunOut ? 'warn' : r !== undefined && r < PACE_CHILL ? 'ok' : 'dim',
+  const tk = tokSum()
+  const info: PanelInfo = {
+    now,
+    working,
+    tool: shownTool(now),
+    lastTurnMs,
+    lastTurnTools,
+    note: noteOn(now),
+    modelId,
+    effort,
+    project,
+    branch,
+    dirty,
+    startedAt: u.startedAt,
+    usd: u.cost ? u.cost.usd : undefined,
+    pct,
+    ctxTokens,
+    ctxWindow,
+    five,
+    week,
+    showFive,
+    turnStartedAt,
+    agents: agentsNow,
+    toolCounts,
+    tokens: { state: tokState, total: tokTotal(tk), output: tk.output },
   }
+  return { info, scene: sceneOf(working, now) }
 }
 
 // ---------------- 客户端 (桌面 app) 版 ----------------
-// 客户端横栏一格约 7.35 像素 (按 81 格 ≈ 596 像素的实测截图校准)
-const DESKTOP_PX_PER_COL = 7.35
-
 async function buildDesktop($: any, els: any, cols: number, working: boolean) {
   const { Box, Svg } = els
   const s = await snapshot($, working)
-  // 会在重置前用完 -> "40m 用完" (红色), 否则只写重置倒计时 "1h20m"; tick = 窗口已过比例 (条上的时间刻度)
-  const limitMeter = (l: Limit | undefined, p: Pace | undefined): DashData['week'] =>
-    p?.willRunOut && p.runOutIn !== undefined
-      ? { pct: l?.percentUsed, extra: durShort(p.runOutIn) + ' 用完', warn: true, tick: p.elapsedFrac }
-      : { pct: l?.percentUsed, extra: p?.resetIn !== undefined ? durShort(p.resetIn) : '', tick: p?.elapsedFrac }
-  const ag = agentsNow ? `  +${agentsNow} 个子代理` : ''
-  // 客户端只显示到分钟: 每秒变一次会让图片每秒重换一次
-  const ran = s.now - turnStartedAt
-  const st = statusOf(s.now, working)
-  const status: DashData['status'] = {
-    ...st,
-    text: st.tone === 'agents' ? agentsNow + ' 个' + st.text : st.text + (st.tone === 'work' ? (ran >= 60_000 ? '  ' + durShort(ran) : '') + ag : ''),
-  }
-  const top = Object.entries(toolCounts)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3)
-    .map(([t, n]) => shortTool(t) + ' ' + n)
-    .join('  ')
-  const counted = tokState === 'ready' || tokState === 'failed'
-  const data: DashData = {
-    model: prettyModel(modelId),
-    effort,
-    project: project || '--',
-    branch: branch ? branch + (dirty ? ' *' + dirty : '') : '',
-    session: dur(s.now - (s.u.startedAt ?? s.now)),
-    cost: s.u.cost ? '$' + s.u.cost.usd.toFixed(2) : '',
-    ctx: { pct: s.pct, extra: tok(s.ctxTokens) + ' / ' + tok(s.ctxWindow) },
-    ...(s.showFive ? { five: limitMeter(s.five, s.p5) } : { reset: resetInfo(s.week, s.pw, s.now) }),
-    week: limitMeter(s.week, s.pw),
-    status,
-    tools: top,
-    tokenTotal: counted ? big(tokTotal(s.tk)) : '统计中..',
-    tokenOutput: counted ? big(s.tk.output) : '',
-  }
-  const sc = s.scene
-  // 可用宽度: 横栏格数 x 每格像素, 减去螃蟹和间距; 太窄就只放一行用量条
+  // 卡片上写什么 (dashData)、螃蟹摆什么样 (deskCrab)、卡片多宽 (deskLayout) 都是纯函数, README 动图也用它们
+  const data = dashData(s.info)
   lastDesktopCols = cols
-  const crabScale = 5
-  const crabW = 16 * crabScale
-  // 估计的可用宽度; 故意多画 5% + 20 像素, 让客户端总是把它等比缩到正好贴满卡片, 右边缘和卡片对齐
-  const est = Math.round((cols || 100) * DESKTOP_PX_PER_COL) - crabW - 15
-  const dashW = Math.max(340, Math.min(1040, Math.round(est * 1.05) + 20))
-  const compact = layout === 'compact' || est < 380
-  // 螃蟹直接画在卡片上 (没有底板/边框); 当普通图片显示, SMIL 动画照样会动, 必须给明确宽高
-  const crab = crabSvg(
-    {
-      mode: crabPose(sc), // 姿势和终端版同一套先后
-      kind: sc.kind,
-      heat: lastPct >= 95 ? 'crit' : lastPct >= 80 ? 'hot' : 'ok',
-      agents: Math.min(3, agentsNow),
-      mood,
-    },
-    compact ? 3 : crabScale,
-  )
-  const crabSize = compact ? { w: 48, h: 21 } : { w: crabW, h: 7 * crabScale }
+  const { compact, dashW, crabScale, crabSize } = deskLayout(cols, layout === 'compact')
+  // 螃蟹直接画在卡片上 (没有底板/边框); 当普通图片显示, SMIL 动画照样会动
+  const crab = crabSvg(deskCrab(s.scene), crabScale)
   const dash = dashSvg(data, { compact, width: dashW })
   return (
     <Box key="hud-d-row" flexDirection="row" alignItems="center" columnGap={2}>
@@ -1360,300 +962,81 @@ async function buildDesktop($: any, els: any, cols: number, working: boolean) {
   )
 }
 
+// 终端 PromptHint 的用量面板: 取数 (snapshot) -> 排版 (panel.ts 的 panelView, 纯函数, README 动图也用它) -> 画成组件
 async function buildView($: any, els: any, surface: string, W: number, working: boolean) {
   const { Box, Text, Button } = els
   const isTerm = surface === 'terminal'
   // 取数和终端 / 客户端共用 (snapshot): 用量、上下文、子代理、额度配速、心情、事件、螃蟹的处境
-  const { now, u, ctxTokens, ctxWindow, pct, five, week, p5, pw, showFive, scene, tk } = await snapshot($, working)
-  const tokenText =
-    tokState === 'counting' || tokState === 'idle'
-      ? '统计中..'
-      : big(tokTotal(tk)) + (tokState === 'failed' ? ' 本次启动' : '  out ' + big(tk.output))
-  const pulse = (l?: { percentUsed: number }) => (l && l.percentUsed >= 90 ? 0.25 * (1 + Math.sin(frame / 2)) : 0)
-
-  const onModel = () => runSlash($, 'model')
-  const onContext = () => runSlash($, 'context')
-  const onUsage = () => runSlash($, 'usage', USAGE_URL)
-  const onProject = () => openProject($)
-  const onCompact = () => runSlash($, 'compact')
-  const onEffort = () => runSlash($, 'effort')
-  const onAgents = () => openAgents($, true)
-  const showCompact = (pct ?? 0) >= COMPACT_AT
-
-  const model = prettyModel(modelId)
-  // 状态格 (statusOf): 干活时前面是跳动条、后面是计时; 子代理在跑时前面也有跳动条
-  const st0 = statusOf(now, working)
-  const stColor = st0.color ?? (st0.tone === 'work' ? ACCENT : st0.tone === 'agents' ? VIOLET : DIM)
-  const statusText = (max: number): { text: string; color: string; bold?: boolean } => {
-    const one = (text: string) => ({ text, color: stColor, bold: st0.bold })
-    if (st0.tone === 'work') {
-      // 放不下 "工具名 + 计时" 时 (比如精简版状态格后面还有 +N代理 按钮) 先省掉计时, 不在半截处截断
-      if (max < 15) return one(eq(frame) + ' ' + clip(st0.text, Math.max(2, max - 4)))
-      const room = max - 11
-      return one(eq(frame) + ' ' + padR(clip(st0.text, room), room) + ' ' + padL(dur(now - turnStartedAt), 6))
-    }
-    // 子代理在跑时面板至少隔帧画一次 (needsFrame), 跳动条按半速走, 6 个相位都走得到
-    return one(clip(st0.tone === 'agents' ? eq(frame >> 1) + ' ' + st0.text : st0.text, max))
-  }
-  // 状态格: 文字 + (有子代理时) 末尾一个可点的 "+N代理" -> 子代理看板
-  // 文字补齐到固定宽度, 按钮的位置在工作 / 闲置两态完全一样
-  const agLabel = agentsNow ? '+' + agentsNow + '代理' : ''
-  const statusParts = (max: number): any[] => {
-    const room = agLabel ? Math.max(0, max - dw(agLabel) - 1) : max
-    const st = statusText(room)
-    const parts: any[] = [
-      <Text key="st" color={st.color} bold={st.bold ? true : undefined}>
-        {agLabel ? padR(clip(st.text, room), room) + ' ' : clip(st.text, room)}
-      </Text>,
-    ]
-    if (agLabel) parts.push(<Button key="btn-agents" label={agLabel} plain onPress={onAgents} />)
-    return parts
-  }
-
-  // v0.17.2: 终端默认把螃蟹画回面板左边 (12 列螃蟹 + 3 列道具, 3 行; 和 v0.15 及以前一样), 不额外占行
-  //   完整版 96 列起, 中等版 66~95 列, 精简版不到 66 列 (换成 1 行的小螃蟹)
-  //   关掉螃蟹 (/hud crab off) 时面板里不画螃蟹, 网格占满整行 (各档分界前移 17 列)
+  const { info, scene } = await snapshot($, working)
+  // v0.17.2: 终端把螃蟹画在面板左边; /hud crab off 时不画 (别的界面画颜文字)
   const panelCrab = !isTerm || crabOn
-  if (isTerm && !crabOn) lastCrab = undefined // 不画螃蟹: needsFrame 不用再比
-  const crabCols = panelCrab ? SPRITE_W + 2 : 0
-  // ---------- 精简版: 1 行 (终端不到 49 列, 或 /hud 切到精简) ----------
-  if (layout === 'compact' || W - crabCols < 49) {
-    const bw = W >= 120 ? 8 : W >= 100 ? 6 : 4
-    const crab = !panelCrab
-      ? []
-      : isTerm
-        ? [<els.Raster key="crab-mini" columns={MINI_W} rows={1} cells={termCrab(scene, true)} />]
-        : [
-            <Text key="crab-k" color={ACCENT}>
-              {kaomoji(scene)}
-            </Text>,
-          ]
-    // 精简版没有附加文字那段: 会用完时百分比改成红色; 上下文 >=75% 时 "上下文" 标签换成 [压缩] (同样 6 列宽)
-    // 5小时 / 本周 的条上照样画时间刻度
-    const m = (key: string, lab: string, p: number | undefined, onPress: () => void, sh: number, pl: number, more: Partial<MeterOpts> = {}): Seg => {
-      const o: MeterOpts = { key, label: lab, labelW: dw(lab), onPress, pct: p, bw, extra: '', extraW: 0, shimmerAt: sh, pulse: pl, ...more }
-      return { key: 'seg-' + key, w: meterWidth(o), prio: 0, parts: meter(els, o) }
-    }
-    const limOpts = (p?: Pace): Partial<MeterOpts> => ({ ...(p?.willRunOut ? { pctColor: WARN } : {}), tickAt: tickCell(p, bw) })
-    const ctxSeg = showCompact
-      ? m('ctx', '压缩', pct, onCompact, working ? frame % (bw + 6) : -9, 0, { labelW: dw('上下文'), labelKey: 'btn-compact' })
-      : m('ctx', '上下文', pct, onContext, working ? frame % (bw + 6) : -9, 0)
-    const segs: Seg[] = [
-      ...(panelCrab ? [{ key: 'seg-crab', w: isTerm ? MINI_W : 9, prio: 0, parts: crab }] : []),
-      { ...ctxSeg, prio: 1 },
-      // 没有 5 小时限制的账号: 这段不画, 后面的段往前挪
-      ...(showFive ? [{ ...m('h5', '5小时', five?.percentUsed, onUsage, -9, pulse(five), limOpts(p5)), prio: 2 }] : []),
-      { ...m('wk', '本周', week?.percentUsed, onUsage, -9, pulse(week), limOpts(pw)), prio: 3 },
-      {
-        key: 'seg-model',
-        w: dw(model) + 1 + 5 + 1 + Math.max(2, dw(effort)),
-        prio: 4,
-        parts: [<Button key="btn-model" label={model} plain onPress={onModel} />, <Text key="m-sp"> </Text>, ...effortParts(els, 'c-eff', onEffort)],
-      },
-      {
-        key: 'seg-status',
-        w: 18,
-        prio: 5,
-        parts: statusParts(18),
-      },
-      {
-        key: 'seg-token',
-        w: 6 + 9,
-        prio: 6,
-        parts: [
-          <Button key="btn-token" label="token" plain dimColor onPress={() => showTokenDetail($)} />,
-          <Text key="tk" color={VALUE}>
-            {' ' + clip(tokState === 'ready' || tokState === 'failed' ? big(tokTotal(tk)) : '..', 8)}
-          </Text>,
-        ],
-      },
-    ]
+  // 这一帧真画了螃蟹, termCrab 会再记上; 没画 (关掉了 / 精简版放不下) 就不用 needsFrame 再比
+  if (isTerm) lastCrab = undefined
+  // 三根条的数字滚动 (有状态, 所以在这里算好再交给 panelView)
+  const eased = { ctx: ease('ctx', info.pct), h5: ease('h5', info.five?.percentUsed), wk: ease('wk', info.week?.percentUsed) }
+  const view = panelView({ ...info, W, term: isTerm, crab: panelCrab, compact: layout === 'compact', frame, shown: eased })
+
+  // 片段 -> 组件
+  const press: Record<Act, () => void> = {
+    model: () => runSlash($, 'model'),
+    effort: () => runSlash($, 'effort'),
+    context: () => runSlash($, 'context'),
+    compact: () => runSlash($, 'compact'),
+    usage: () => runSlash($, 'usage', USAGE_URL),
+    project: () => openProject($),
+    agents: () => openAgents($, true),
+    token: () => showTokenDetail($),
+  }
+  // 螃蟹: 终端是像素画 (精简版 8x1, 完整 / 中等版 15x3, 右边 3 列是道具); 其他界面是颜文字
+  const crab = (mini: boolean) =>
+    isTerm ? (
+      <els.Raster key={mini ? 'crab-mini' : 'crab'} columns={mini ? MINI_W : SPRITE_W} rows={mini ? 1 : 3} cells={termCrab(scene, mini)} />
+    ) : (
+      <Text key="crab-k" color={ACCENT}>
+        {kaomoji(scene)}
+      </Text>
+    )
+  const part = (p: Part, mini: boolean) =>
+    p.t === 'text' ? (
+      <Text key={p.key} color={p.color} bold={p.bold}>
+        {p.text}
+      </Text>
+    ) : p.t === 'button' ? (
+      <Button key={p.key} label={p.label} plain dimColor={p.dim} onPress={press[p.act]} />
+    ) : (
+      crab(mini)
+    )
+  const cell = (c: PanelCell, mini = false) => (
+    <Box key={c.key} width={c.w} flexShrink={0} flexDirection="row" overflow="hidden">
+      {c.parts.map(p => part(p, mini))}
+    </Box>
+  )
+
+  if (view.layout === 'compact') {
     return (
-      <Box key="hud" flexDirection="row" columnGap={2} height={1} paddingLeft={HPAD} paddingRight={HPAD}>
-        {fit(segs, W - HPAD * 2, 2).map(s => cell(els, s.key, s.w, s.parts))}
+      <Box key="hud" flexDirection="row" columnGap={view.gap} height={1} paddingLeft={view.marginL} paddingRight={view.marginR}>
+        {view.cells.map(c => cell(c, true))}
       </Box>
     )
   }
-
-  // ---------- 完整版: 3 行 x 3 列 (终端 79 列以上) ----------
-  // ---------- 中等版: 3 行 x 2 列 (终端 49~78 列, 比如 macOS 默认的 80 列窗口) ----------
-  //   左列 模型 / 项目 / 状态, 右列 上下文 / 5小时 / 本周; 本会话、工具、token 放不下, 只在完整版里显示
-  // 左右各留 HPAD 格; 各列取整后剩下的零头平分到两边, 让面板两端留空一样
-  const nCols = W - crabCols >= 79 ? 3 : 2
-  const avail = W - crabCols - HPAD * 2
-  const cw = Math.floor((avail - (nCols - 1) * GAP) / nCols)
-  const A = cw * nCols + GAP * (nCols - 1)
-  const marginL = HPAD + Math.floor((avail - A) / 2)
-  const marginR = HPAD + Math.ceil((avail - A) / 2)
-  const inner = cw - LABEL_W - 1
-  let extraW = 11
-  let bw = inner - 5 - 1 - extraW
-  if (bw < 6) {
-    extraW = 5
-    bw = inner - 5 - 1 - extraW
-  }
-  // 用量条吃掉这一列剩下的宽度, 第三列的条正好撑到右边距
-  bw = Math.max(3, Math.min(60, bw))
-  // 5小时 / 本周 的附加那段 (limW 列) 和条长 (limBw):
-  //   完整版: 三格在不同列, 附加只放 "1h54m" / "40m用完", 7 列就够, 省下的给条;
-  //           上下文退到 5 列时 (窄一点的完整版) 三格都用 5 列, 条一样长, 不比旧版短 (会用完时只有百分比红, 文字照常是重置倒计时)
-  //   中等版: 三根条在同一列上下叠着, 条长和附加宽度必须和上下文那根一样, 百分比才竖着对齐
-  let limW = extraW
-  let limBw = bw
-  if (nCols === 3 && extraW === 11) {
-    limW = 7
-    limBw = Math.max(3, Math.min(60, inner - 5 - 1 - limW))
-  }
-  const x5 = limitExtra(p5, limW)
-  const xw = limitExtra(pw, limW)
-  // 会用完: 百分比变红 (加粗); 附加文字写成 "…用完" 时也变红, 放不下 "用完" 时照常是暗色的重置倒计时
-  const limMeter = (key: string, lab: string, l: Limit | undefined, p: Pace | undefined, x: { text: string; warn: boolean }) =>
-    meter(els, {
-      key,
-      label: lab,
-      labelW: LABEL_W,
-      onPress: onUsage,
-      pct: l?.percentUsed,
-      pctColor: p?.willRunOut ? WARN : undefined,
-      bw: limBw,
-      extra: x.text,
-      extraW: limW,
-      extraColor: x.warn ? WARN : undefined,
-      shimmerAt: -9,
-      pulse: pulse(l),
-      tickAt: tickCell(p, limBw),
-    })
-
-  // 第 1 行
-  // 项目名优先完整显示, 分支名只用剩下的位置 (不够 4 格就不显示)
-  const proj = clip(project || '--', inner)
-  const branchRoom = inner - dw(proj) - 1
-  const branchText = branch && branchRoom >= 4 ? clip(branch + (dirty ? ' *' + dirty : ''), branchRoom) : ''
-  const r1 = [
-    [
-      ...label(els, 'l-model', '模型', LABEL_W),
-      <Button key="btn-model" label={model} plain onPress={onModel} />,
-      <Text key="m-sp"> </Text>,
-      ...effortParts(els, 'eff', onEffort, inner - dw(model) - 1),
-    ],
-    [
-      ...label(els, 'l-proj', '项目', LABEL_W),
-      <Button key="btn-project" label={proj} plain onPress={onProject} />,
-      <Text key="b-t" color={VIOLET}>
-        {branchText ? ' ' + branchText : ''}
-      </Text>,
-    ],
-    [
-      // 本会话 = 这个对话 (含恢复前), 不是整个项目; /clear 会重新开始计
-      ...label(els, 'l-sess', '本会话', LABEL_W),
-      <Text key="s-t" color={VALUE}>
-        {padR(dur(now - (u.startedAt ?? now)), 7)}
-      </Text>,
-      <Text key="s-c" color={DIM}>
-        {u.cost ? '$' + u.cost.usd.toFixed(2) : ''}
-      </Text>,
-    ],
-  ]
-
-  // 第 2 行
-  const r2 = [
-    meter(els, {
-      key: 'ctx',
-      label: '上下文',
-      labelW: LABEL_W,
-      onPress: onContext,
-      pct,
-      bw,
-      // 窄的时候只放已用量, 不放 "/窗口大小"
-      extra: extraW >= 9 ? tok(ctxTokens) + '/' + tok(ctxWindow) : tok(ctxTokens),
-      extraW,
-      // 上下文 >=75%: 附加那段换成 [压缩] 按钮 (宽的时候前面还留着已用 token 数)
-      extraParts: showCompact ? compactParts(els, extraW, tok(ctxTokens), onCompact) : undefined,
-      shimmerAt: working ? (frame % (bw + 8)) - 2 : -9,
-      pulse: 0,
-    }),
-    ...(showFive ? [limMeter('h5', '5小时', five, p5, x5)] : []),
-    limMeter('wk', '本周', week, pw, xw),
-  ]
-  // 没有 5 小时限制 (完整版): 第 2 行 = 上下文 | 本周 | 重置 (和别的格子一样宽)
-  //   重置那格: 本周额度什么时候重置 + 配速, 写法和颜色规矩和客户端那格同一份 (resetInfo)
-  const resetCell = () => {
-    const r = resetInfo(week, pw, now)
-    const room = inner - dw(r.when)
-    return [
-      ...label(els, 'btn-reset', '重置', LABEL_W, onUsage),
-      <Text key="rs-t" color={VALUE}>
-        {clip(r.when, inner)}
-      </Text>,
-      <Text key="rs-p" color={TONE_COLOR[r.tone]} bold={r.tone === 'warn' ? true : undefined}>
-        {r.pace && room >= dw(r.pace) + 2 ? '  ' + r.pace : ''}
-      </Text>,
-    ]
-  }
-
-  // 没有 5 小时: 空出来的第 3 格, 完整版放 "重置", 中等版放本会话 (中等版本来放不下本会话, 这下正好)
-  if (!showFive) r2.push(nCols === 3 ? resetCell() : r1[2])
-
-  // 第 3 行
-  const top = Object.entries(toolCounts)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3)
-    .map(([t, n]) => shortTool(t) + ' ' + n)
-    .join('  ')
-  const r3 = [
-    [
-      ...label(els, 'l-st', '状态', LABEL_W),
-      ...statusParts(inner),
-    ],
-    [
-      ...label(els, 'l-tools', '工具', LABEL_W),
-      <Text key="tl" color={VALUE}>
-        {clip(top || '还没有', inner)}
-      </Text>,
-    ],
-    [
-      // 点 "token" 弹出明细: 读缓存 / 写缓存 / 新输入 / 输出
-      ...label(els, 'btn-token', 'token', LABEL_W, () => showTokenDetail($)),
-      <Text key="tk" color={VALUE}>
-        {clip(tokenText, inner)}
-      </Text>,
-    ],
-  ]
-
-  // 中等版: 左列放文字 (模型 / 项目 / 状态), 右列放第 2 行那三格
-  const rows = nCols === 3 ? [r1, r2, r3] : [[r1[0], r2[0]], [r1[1], r2[1]], [r3[0], r2[2]]]
-
-  const gridRow = (key: string, cells: any[][]) => (
-    <Box key={key} flexDirection="row" columnGap={GAP} height={1}>
-      {cells.map((parts, i) => cell(els, key + 'c' + i, cw, parts))}
-    </Box>
-  )
-
-  // 螃蟹: 终端是像素画 (按工具做动作, 右边 3 列是道具: 纸 / 终端 / 地球 / 齿轮 ...); 其他界面是颜文字
-  const sprite = !panelCrab ? null : (
+  const sprite = !view.crab ? null : (
     <Box key="sprite" width={SPRITE_W} flexShrink={0} height={3}>
-      {isTerm ? (
-        <els.Raster key="crab" columns={SPRITE_W} rows={3} cells={termCrab(scene, false)} />
-      ) : (
-        <Text key="crab-k" color={ACCENT}>
-          {kaomoji(scene)}
-        </Text>
-      )}
+      {crab(false)}
     </Box>
   )
-
   return (
-    <Box key="hud" flexDirection="row" columnGap={sprite ? 2 : 0} paddingLeft={marginL} paddingRight={marginR}>
+    <Box key="hud" flexDirection="row" columnGap={sprite ? CRAB_GAP : 0} paddingLeft={view.marginL} paddingRight={view.marginR}>
       {sprite}
-      <Box key="info" flexDirection="column" width={A} flexShrink={0}>
-        {gridRow('r1', rows[0])}
-        {gridRow('r2', rows[1])}
-        {gridRow('r3', rows[2])}
+      <Box key="info" flexDirection="column" width={view.width} flexShrink={0}>
+        {view.rows.map((cells, r) => (
+          <Box key={'r' + (r + 1)} flexDirection="row" columnGap={view.gap} height={1}>
+            {cells.map(c => cell(c))}
+          </Box>
+        ))}
       </Box>
     </Box>
   )
 }
-
 
 // ---------------- 每轮收据 ----------------
 function lineCount(s: unknown): number {
@@ -1786,130 +1169,34 @@ async function readClockLocale($: any) {
   }
 }
 
-// " · $0.42 · 改 3 个文件 +120 -30 · 工具 12 次"; 没数据的段省掉, 全没有就是空串
-export function receiptText(r: Receipt): string {
-  const parts: string[] = []
-  if (r.usd !== undefined && r.usd >= 0.005) parts.push('$' + r.usd.toFixed(2))
-  if (r.files > 0) parts.push('改 ' + r.files + ' 个文件' + (r.add || r.del ? ' +' + r.add + ' -' + r.del : ''))
-  if (r.tools > 0) parts.push('工具 ' + r.tools + ' 次')
-  return parts.length ? ' · ' + parts.join(' · ') : ''
-}
-
 // ---------------- 子代理看板 (侧边面板) ----------------
-const KID_STATUS: Record<string, [string, string]> = {
-  running: ['运行中', VIOLET],
-  completed: ['已完成', '#4ade80'],
-  failed: ['失败', WARN],
-  killed: ['已停止', DIM],
-}
+// 每一行写什么在 panel.ts 的 agentsPaneView (README 动图也用它); 这里只画成组件
 async function buildAgentsPane($: any, els: any, W: number) {
-  const { Box, Text, Button } = els
+  const { Box, Text } = els
   const now = await $.clock.now()
   await syncAgents($, now)
-  const shown = [...kids.values()].filter(k => k.known)
-  const running = shown.filter(k => k.endedAt === undefined).sort((a, b) => a.startedAt - b.startedAt)
-  const ended = shown
-    .filter(k => k.endedAt !== undefined)
-    .sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0))
-    .slice(0, KEEP_ENDED)
-  const width = Math.max(30, W)
-  const wide = width >= 72
-  const line = (key: string, cols: Array<[string, number, string?]>) => (
-    <Box key={key} flexDirection="row" height={1}>
-      {cols.map(([text, w, color], i) => (
-        <Text key={key + '-' + i} color={color ?? VALUE}>
-          {padR(clip(text, w), w) + (i < cols.length - 1 ? ' ' : '')}
-        </Text>
-      ))}
-    </Box>
+  const v = agentsPaneView(
+    [...kids.values()].filter(k => k.known),
+    now,
+    W,
   )
-  // 宽面板一行一个: 状态 | 描述 | 时长 | 最后动静 | 最后工具 | 工具 (次数; 表头不能超过 FIX.n 格, 否则被截成 "工..")
-  const FIX = { st: 8, ran: 7, idle: 9, tool: 14, n: 5 }
-  const descW = Math.max(8, width - (FIX.st + FIX.ran + FIX.idle + FIX.tool + FIX.n) - 5)
-  const row = (k: Kid) => {
-    const isRun = k.endedAt === undefined
-    const quiet = now - k.lastAt
-    const stuck = isRun && quiet > STUCK_MS
-    const [stText, stColor] = stuck ? ['可能卡住', WARN] : (KID_STATUS[k.status] ?? [safe(k.status) || '已结束', DIM])
-    const name = k.desc || k.type || safe(k.id)
-    const ran = dur((k.endedAt ?? now) - k.startedAt)
-    const idle = isRun ? dur(quiet) + ' 前' : '--'
-    const tool = k.lastTool ? shortTool(k.lastTool) : '--'
-    const color = isRun ? (stuck ? WARN : VALUE) : DIM
-    if (wide) {
-      return [
-        line('k-' + k.id, [
-          [stText, FIX.st, stColor],
-          [name, descW, color],
-          [ran, FIX.ran, color],
-          [idle, FIX.idle, stuck ? WARN : color],
-          [tool, FIX.tool, color],
-          [String(k.tools), FIX.n, color],
-        ]),
-      ]
-    }
-    // 窄面板两行一个
-    const detail = isRun ? '已跑 ' + ran + ' · ' + idle + ' ' + tool + ' · ' + k.tools + ' 次' : '用时 ' + ran + ' · ' + k.tools + ' 次工具'
-    return [
-      line('k-' + k.id, [
-        [stText, FIX.st, stColor],
-        [name, width - FIX.st - 1, color],
-      ]),
-      line('k2-' + k.id, [
-        ['', FIX.st],
-        [detail, width - FIX.st - 1, stuck ? WARN : DIM],
-      ]),
-    ]
-  }
-  const head = wide
-    ? [
-        line('k-head', [
-          ['状态', FIX.st, DIM],
-          ['描述', descW, DIM],
-          ['时长', FIX.ran, DIM],
-          ['最后动静', FIX.idle, DIM],
-          ['最后工具', FIX.tool, DIM],
-          ['工具', FIX.n, DIM],
-        ]),
-      ]
-    : []
-  const body: any[] = [
-    <Box key="k-top" flexDirection="row" height={1}>
-      <Text key="k-title" color={ACCENT} bold>
-        {'子代理'}
-      </Text>
-      <Text key="k-sum" color={DIM}>
-        {padR('  运行中 ' + running.length + ' · 已结束 ' + ended.length, Math.max(0, width - 6))}
-      </Text>
-    </Box>,
-  ]
-  if (!shown.length) {
-    body.push(
-      <Text key="k-none" color={DIM}>
-        {'这个会话还没有子代理，Esc 关闭'}
-      </Text>,
-    )
-  }
-  if (running.length) body.push(...head, ...running.flatMap(row))
-  if (ended.length) {
-    body.push(
-      <Text key="k-ended" color={DIM}>
-        {'已结束 (最近 ' + KEEP_ENDED + ' 个)'}
-      </Text>,
-      ...(running.length ? [] : head),
-      ...ended.flatMap(row),
-    )
-  }
-  if (shown.length) {
-    body.push(
-      <Text key="k-tip" color={DIM}>
-        {'运行中超过 5 分钟没有工具动作的会标红，Esc 关闭'}
-      </Text>,
-    )
-  }
   return (
-    <Box key="kids" flexDirection="column" width={width}>
-      {body}
+    <Box key="kids" flexDirection="column" width={v.width}>
+      {v.lines.map(l =>
+        l.bare ? (
+          <Text key={l.key} color={l.parts[0].color}>
+            {l.parts[0].text}
+          </Text>
+        ) : (
+          <Box key={l.key} flexDirection="row" height={1}>
+            {l.parts.map(x => (
+              <Text key={x.key} color={x.color} bold={x.bold}>
+                {x.text}
+              </Text>
+            ))}
+          </Box>
+        ),
+      )}
     </Box>
   )
 }
@@ -1924,7 +1211,7 @@ export function previewScene(tool: string, opts: PreviewOpts = {}) {
   for (let f = 0; f < (opts.frames ?? 24); f++) {
     frame = f
     const s = previewOne(tool, opts)
-    out.push(encode(scenePx(s, f), SPRITE_W, 3), encode(miniPx(s, f), MINI_W, 1))
+    out.push(crabCells(s, false), crabCells(s, true))
   }
   frame = 0
   return { label: toolLabel(tool), kind: toolKind(tool), frames: out }

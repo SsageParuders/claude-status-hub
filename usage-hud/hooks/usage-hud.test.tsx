@@ -1,5 +1,6 @@
 import { test, expect, mock } from 'claude-code/testing'
-import { previewScene, previewPixels, paceOf, moodOf, receiptText } from './register'
+import { previewScene, previewPixels } from './register'
+import { paceOf, moodOf, receiptText, whenAt } from './panel'
 import { crabSvg, dashSvg } from './desktop'
 import { COL, DEF, crabPose } from './sprites'
 // v0.16.3 的新函数用 * 取: 反查时放在 0.16.2 上跑, 缺的函数只让用到它的测试失败, 不让整个文件加载不了
@@ -1762,9 +1763,9 @@ test('没有 5 小时限制: 三档都不画 5小时; 完整版第 2 行 上下�
 
 test('重置时刻的写法: 今天 / 明天 / 周几 + 时:分 (本地时间)', () => {
   const now = new Date(2026, 10, 6, 21, 30).getTime() // 周五
-  expect(reg.whenAt(new Date(2026, 10, 6, 23, 5).getTime(), now)).toBe('今天 23:05')
-  expect(reg.whenAt(new Date(2026, 10, 7, 5, 0).getTime(), now)).toBe('明天 05:00')
-  expect(reg.whenAt(new Date(2026, 10, 8, 5, 0).getTime(), now)).toBe('周日 05:00')
+  expect(whenAt(new Date(2026, 10, 6, 23, 5).getTime(), now)).toBe('今天 23:05')
+  expect(whenAt(new Date(2026, 10, 7, 5, 0).getTime(), now)).toBe('明天 05:00')
+  expect(whenAt(new Date(2026, 10, 8, 5, 0).getTime(), now)).toBe('周日 05:00')
 })
 
 test('没有 5 小时的判定: 上次记下的在第一次回复前就生效; five_hour 再出现就恢复三格', async ($, on) => {

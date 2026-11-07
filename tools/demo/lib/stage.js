@@ -15,7 +15,7 @@ export const lerp = (a, b, k) => a + (b - a) * k
 
 const CSS = `
   html, body { margin: 0; padding: 0; }
-  body { position: relative; overflow: hidden; font-family: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; }
+  body { position: relative; overflow: hidden; font-family: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", -apple-system, "PingFang SC", sans-serif; }
   .bg { position: absolute; inset: 0;
     background:
       radial-gradient(760px 420px at 8% 108%, rgba(215,119,87,0.34), transparent 70%),

@@ -22,7 +22,7 @@ export type DashData = {
   five?: Meter // 没有 5 小时限制的账号 (v0.17) 不给: 第 2 行变成 上下文 | 本周 | 重置
   week: Meter
   reset?: { when: string; pace: string; tone: 'warn' | 'ok' | 'dim' } // 没有 5 小时时第 3 格: 本周重置时刻 + 配速
-  status: { text: string; tone: 'work' | 'agents' | 'idle'; color?: string; bold?: boolean } // color / bold: 状态格事件 (搞定 / 慢点 ...)
+  status: { text: string; tone: 'work' | 'agents' | 'idle'; color?: string; bold?: boolean } // color / bold: 状态格事件 (搞定 / 慢点 ...); 终端状态格也用这个形状
   tools: string
   tokenTotal: string
   tokenOutput: string
@@ -50,8 +50,30 @@ const C = {
   warn: '#f87171',
   tick: '#e5e5e5', // 时间刻度: 彩色段和暗色轨道上都看得清
 }
-const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
-const EFFORT_COLOR: Record<string, string> = { low: '#a1a1aa', medium: '#60a5fa', high: '#fbbf24', xhigh: '#fb923c', max: '#f87171' }
+// 思考档位的先后和颜色 (终端面板 panel.ts 也用这一份)
+export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
+export const EFFORT_COLOR: Record<string, string> = { low: '#a1a1aa', medium: '#60a5fa', high: '#fbbf24', xhigh: '#fb923c', max: '#f87171' }
+
+// ---------------- 卡片尺寸 (插件的 buildDesktop、README 动图、tools/preview-client.mjs 共用) ----------------
+// 客户端横栏一格约 7.35 像素 (按 81 格 ≈ 596 像素的实测截图校准)
+const PX_PER_COL = 7.35
+// cols = 横栏格数; compact = /hud 切到了精简版. 可用宽度 = 格数 x 每格像素, 减去螃蟹和间距; 太窄就只放一行用量条
+export function deskLayout(cols: number, compact: boolean) {
+  const crabScale = 5
+  const crabW = 16 * crabScale
+  const contentW = Math.round((cols || 100) * PX_PER_COL)
+  // 估计的可用宽度; 故意多画 5% + 20 像素, 让客户端总是把它等比缩到正好贴满卡片, 右边缘和卡片对齐
+  const est = contentW - crabW - 15
+  const small = compact || est < 380
+  return {
+    contentW,
+    compact: small,
+    dashW: Math.max(340, Math.min(1040, Math.round(est * 1.05) + 20)),
+    crabScale: small ? 3 : crabScale,
+    // 螃蟹当普通图片显示, 必须给明确宽高
+    crabSize: small ? { w: 48, h: 21 } : { w: crabW, h: 7 * crabScale },
+  }
+}
 
 export function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')

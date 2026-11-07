@@ -10,11 +10,12 @@
 </head>
 <body>
 <script type="module">
-import { Grid, drawGrid, metrics } from '../lib/cells.js'
+import { Grid, drawGrid, metrics, hex } from '../lib/cells.js'
 import { makeStage, termWindow, makePointer, canvasLayer, pathAt, seg, easeOut, easeInOut, typed, lerp } from '../lib/stage.js'
 import { transcript, inputBox, hint, spinner, C } from '../lib/claude.js'
-import { drawHud, drawAgentsPane, easeAt, dur, paceOf, moodOf, receiptText } from '../lib/hud.js'
-import { FRAME_MS, scenePx, setFrame, toolKind } from '../lib/crab.js'
+import { drawHud, drawAgentsPane, easeAt, sceneOf } from '../lib/hud.js'
+import { dur, receiptText } from '/vendor/panel.js'
+import { FRAME_MS, scenePx } from '/vendor/sprites.js'
 
 // ---------------- 尺寸 ----------------
 const COLS = 128, ROWS = 28, CW = 8, CH = 16, SIZE = 13.65
@@ -53,7 +54,7 @@ const CLICK_AGENTS = 7.4, PANE_IN = 7.5, PANE_OUT = 9.0
 // 每次模型回复结束 (主线程每个工具调用前、子代理每次请求、最后一段文字) 用量数据更新一次
 const STEPS = [2.4, 3.4, 4.8, 6.2, 6.6, 7.1, 7.7, 8.3, 8.9, 9.5, 9.9]
 // 5小时窗口刚开始 12 分钟 (4h48m 后重置): 用量从 3% 涨到 23%, 配速从 0.75 涨到 5.75
-//   -> 情绪 悠闲 -> 正常 -> 冒汗; 红字从 "3h22m后用完" 一路缩到 "约40m后用完" (全部由移植的 paceOf / limitExtra 算出)
+//   -> 情绪 正常 -> 冒汗; 红字从 "3h22m用完" 一路缩到 "40m用完" (全部由插件的 paceOf / limitExtra 算出)
 const FIVE = [3.0, 3.6, 4.4, 5.6, 7.5, 10.5, 14.0, 17.5, 20.5, 22.4, 22.9, 23.3]
 const WEEK = [41.2, 41.3, 41.4, 41.5, 41.6, 41.7, 41.8, 41.9, 42.0, 42.1, 42.2, 42.3]
 // 上下文只跟主线程走: 子代理的请求不加主线程上下文; 子代理结果回来后过 75% -> 出现 [压缩]
@@ -80,7 +81,7 @@ function tokensAt(t) {
 }
 const agentRunning = t => t >= KID_START && t < KID_END
 
-// 某一时刻 usage-hud 看到的会话状态 (对应源码里的模块变量、$.session.usage() 和 $.agent.list())
+// 某一时刻 usage-hud 看到的会话状态 (对应源码里的模块变量、$.session.usage() 和 $.agent.list()); 字段名就是 panel.ts 的 PanelInfo
 function hudState(t) {
   const fi = Math.floor((t * 1000) / FRAME_MS)
   const working = t >= ENTER && t < COMPLETE
@@ -94,7 +95,7 @@ function hudState(t) {
   return {
     frame: FRAME0 + fi,
     working,
-    currentTool: running ? running.tool : '',
+    tool: running ? running.tool : '',
     now: NOW0 + t * 1000,
     startedAt: NOW0 - SESSION_MS,
     turnStartedAt: NOW0 + ENTER * 1000,
@@ -105,17 +106,20 @@ function hudState(t) {
     project: 'my-app',
     branch: 'main',
     dirty: 0,
-    costUsd: COST[k],
-    ctx: { pct: ctxPct(CTX_TOK[k]), tokens: CTX_TOK[k], window: CTX_WIN },
+    usd: COST[k],
+    pct: ctxPct(CTX_TOK[k]),
+    ctxTokens: CTX_TOK[k],
+    ctxWindow: CTX_WIN,
     five: { kind: 'five_hour', percentUsed: FIVE[k], resetsAt: RESET5 },
     week: { kind: 'seven_day', percentUsed: WEEK[k], resetsAt: RESETW },
+    showFive: true,
     // 会话已经跑了一阵, 显示值早已追上目标: 从当前目标起步, 之后每帧按源码的 ease() 追
     shown: {
       ctx: easeAt(f => ctxPct(CTX_TOK[stepIdx((f * FRAME_MS) / 1000)]), fi, ctxPct(CTX_TOK[0])),
       h5: easeAt(target(FIVE), fi, FIVE[0]),
       wk: easeAt(target(WEEK), fi, WEEK[0]),
     },
-    tok: { state: 'ready', ...tokensAt(t) },
+    tokens: { state: 'ready', ...tokensAt(t) },
     toolCounts: counts,
     agents: agentRunning(t) ? 1 : 0,
     celebrating: t >= COMPLETE && (t - COMPLETE) * 1000 < CELEBRATE_MS,
@@ -164,7 +168,7 @@ function drawTerminal(ctx, m, t) {
   lastButtons = hud.buttons
   // 指针正压在 "+1代理" 上: 按钮反色 (引擎对 Button 的固定画法)
   const b = hud.buttons.agents
-  if (b && pointerOn(t)) g.text(b[0], b[1], '+1代理', { fg: '#0c0c0c', bg: '#ffffff' })
+  if (b && pointerOn(t)) g.text(b[0], b[1], b[3], { fg: C.termBg, bg: C.text })
   hint(g, 27)
   drawGrid(ctx, g, 0, 0, m)
 }
@@ -194,6 +198,8 @@ function drawPane(t) {
   const g = new Grid(PANE_W, PANE_ROWS)
   // 内容 74 列 (>= 72 = 宽面板), 左右各留 2 列
   drawAgentsPane(g, 1, 2, PANE_W - 4, kidsAt(t), NOW0 + t * 1000)
+  // 标题行右边的 "关闭": 引擎画的面板按钮 (插件不画), 和外框一样是示意
+  g.text(1, PANE_W - 8, '关闭', { fg: C.dimText })
   drawGrid(ctx, g, 0, 0, m)
 }
 
@@ -230,12 +236,10 @@ function drawCapCrab(t) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, w, h)
   const s = hudState(t)
-  setFrame(s.frame)
-  const mood = moodOf(paceOf(s.five, s.now), paceOf(s.week, s.now))
-  const px = scenePx({ working: s.working, kind: toolKind(s.currentTool), pct: s.ctx.pct, celebrating: s.celebrating, sleeping: s.sleeping, agents: s.agents, mood })
+  const px = scenePx(sceneOf(s), s.frame)
   px.forEach((row, y) => row.forEach((c, x) => {
     if (c < 0) return
-    ctx.fillStyle = '#' + c.toString(16).padStart(6, '0')
+    ctx.fillStyle = hex(c)
     ctx.fillRect(x * CRAB_PX, y * CRAB_PX, CRAB_PX, CRAB_PX)
   }))
 }

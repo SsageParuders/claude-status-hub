@@ -1,9 +1,9 @@
 // 不开客户端, 直接看 usage-hud 客户端面板长什么样
 // 用法: node tools/preview-client.mjs   (要 Node 23+, 能直接跑 .ts)
-// 输出: tools/out/client.html, 用浏览器打开; 卡片底色仿客户端, 宽度算法和 register.tsx 的 buildDesktop 一致
+// 输出: tools/out/client.html, 用浏览器打开; 卡片底色仿客户端, 宽度算法就是 buildDesktop 用的 deskLayout
 import { mkdirSync, writeFileSync } from 'node:fs'
 
-const { crabSvg, dashSvg } = await import(new URL('../usage-hud/hooks/desktop.ts', import.meta.url).href)
+const { crabSvg, dashSvg, deskLayout } = await import(new URL('../usage-hud/hooks/desktop.ts', import.meta.url).href)
 const enc = s => 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(s)
 
 const idle = {
@@ -32,14 +32,10 @@ const busy = {
 }
 
 function card(cols, data, crabState) {
-  const crabW = 80
-  const est = Math.round(cols * 7.35) - crabW - 15
-  const dashW = Math.max(340, Math.min(1040, Math.round(est * 1.05) + 20))
-  const compact = est < 380
-  const crab = crabSvg(crabState, compact ? 3 : 5)
-  const cw = compact ? 48 : 80
-  const ch = compact ? 21 : 35
-  const contentW = Math.round(cols * 7.35)
+  const { contentW, compact, dashW, crabScale, crabSize } = deskLayout(cols, false)
+  const crab = crabSvg(crabState, crabScale)
+  const cw = crabSize.w
+  const ch = crabSize.h
   return `<div style="width:${contentW}px;background:#2b2b2b;border-radius:14px;padding:16px 18px;margin:10px 0">
   <div style="display:flex;align-items:center;gap:15px">
     <div style="flex:0 0 auto"><img src="${enc(crab)}" width="${cw}" height="${ch}" style="display:block"></div>

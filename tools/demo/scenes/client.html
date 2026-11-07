@@ -28,30 +28,27 @@
 </head>
 <body>
 <script type="module">
-import { crabSvg, dashSvg } from '../vendor/desktop.js'
+import { crabSvg, dashSvg, deskLayout } from '../vendor/desktop.js'
 import { makeStage, seg, easeOut, lerp, typed } from '../lib/stage.js'
-import { prettyModel, dur, durShort, big, tok, paceOf, moodOf, toolLabel } from '../lib/hud.js'
+import { sceneOf } from '../lib/hud.js'
+import { dashData, deskCrab } from '/vendor/panel.js'
 
 const W = 1200, H = 556
 const FPS = 20, DURATION = 12.0
 
-// ---------------- 卡片尺寸: 照 register.tsx 的 buildDesktop 和 tools/preview-client.mjs ----------------
+// ---------------- 卡片尺寸: 插件的 deskLayout (buildDesktop 用的同一份) ----------------
 const COLS = 120 // 客户端横栏的格数 (bodyColumns)
-const PX_PER_COL = 7.35
-const crabScale = 5
-const crabW = 16 * crabScale
-const est = Math.round(COLS * PX_PER_COL) - crabW - 15
-const dashW = Math.max(340, Math.min(1040, Math.round(est * 1.05) + 20))
-const contentW = Math.round(COLS * PX_PER_COL)
+const DESK = deskLayout(COLS, false)
+const contentW = DESK.contentW
 
 // ---------------- 剧情 ----------------
-// 闲置悠闲 (墨镜) -> 工作 -> 派出 2 个子代理 (SVG 小螃蟹) -> 用量配速变快, 冒汗 + 红字 "约 40m 后用完" -> 庆祝
+// 闲置 -> 工作 -> 派出 2 个子代理 (SVG 小螃蟹) -> 用量配速变快, 冒汗 + 红字 "40m 用完" -> 庆祝
 const PROMPT = '给登录页加个「记住我」选项，改完跑一下测试'
 const SEND = 1.5
 const TOOLS = [
-  { tool: 'Read', kind: 'read', args: 'src/auth/login.ts', start: 2.0, end: 2.9 },
-  { tool: 'Agent', kind: 'agent', args: '并行检查其他页面和测试用例', start: 3.2, end: 7.0 },
-  { tool: 'Write', kind: 'edit', args: 'src/auth/remember.ts', start: 7.2, end: 8.3 },
+  { tool: 'Read', args: 'src/auth/login.ts', start: 2.0, end: 2.9 },
+  { tool: 'Agent', args: '并行检查其他页面和测试用例', start: 3.2, end: 7.0 },
+  { tool: 'Write', args: 'src/auth/remember.ts', start: 7.2, end: 8.3 },
 ]
 const AGENTS_FROM = 3.3, AGENTS_TO = 6.9 // 两个子代理在跑的时段
 const FINAL = '已加上「记住我」：勾选后 30 天内免登录，14 个测试全部通过。'
@@ -77,12 +74,9 @@ function limitsAt(t) {
   const k = stepIdx(t)
   return { now: NOW0 + t * 1000, five: { kind: 'five_hour', percentUsed: FIVE[k], resetsAt: RESET5 }, week: { kind: 'seven_day', percentUsed: WEEK[k], resetsAt: RESETW } }
 }
-const moodAt = t => {
-  const { now, five, week } = limitsAt(t)
-  return moodOf(paceOf(five, now), paceOf(week, now))
-}
-// 和 buildDesktop 一样拼 DashData (limitMeter / status / tools / token)
-function dashData(t) {
+// 这一刻的面板数据 (panel.ts 的 PanelInfo, 加上螃蟹要的 celebrating / sleeping):
+//   卡片上写什么由插件的 dashData 决定, 螃蟹摆什么样由 deskCrab 决定, 这里只给原始数据
+function infoAt(t) {
   const k = stepIdx(t)
   const { now, five, week } = limitsAt(t)
   const working = t >= SEND && t < COMPLETE
@@ -100,43 +94,38 @@ function dashData(t) {
     total += CTX[i] + OUT[i] + 20_000
     output += OUT[i]
   }
-  const limitMeter = (l, p) =>
-    p?.willRunOut && p.runOutIn !== undefined
-      ? { pct: l?.percentUsed, extra: '约 ' + durShort(p.runOutIn) + ' 后用完', warn: true }
-      : { pct: l?.percentUsed, extra: l?.resetsAt ? durShort(Date.parse(l.resetsAt) - now) + ' 后重置' : '' }
   const n = agentsAt(t)
-  const ag = n ? `  +${n} 个子代理` : ''
   const done = t >= COMPLETE
-  const status = working
-    ? { text: toolLabel(running ? running.tool : '') + ag, tone: 'work' }
-    : n
-      ? { text: n + ' 个子代理在跑', tone: 'agents' }
-      : { text: '✓ 上一轮 ' + dur(done ? (COMPLETE - SEND) * 1000 : 64_000) + '，' + (done ? TOOLS.length : 6) + ' 次工具', tone: 'idle' }
-  const top = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([nm, c]) => nm + ' ' + c).join('  ')
   return {
-    model: prettyModel('claude-opus-5-5'),
+    now,
+    working,
+    tool: running ? running.tool : '',
+    lastTurnMs: done ? (COMPLETE - SEND) * 1000 : 64_000,
+    lastTurnTools: done ? TOOLS.length : 6,
+    modelId: 'claude-opus-5-5',
     effort: 'high',
     project: 'my-app',
     branch: 'main',
-    session: dur(SESSION_MS + t * 1000),
-    cost: '$' + COST[k].toFixed(2),
-    ctx: { pct: Math.round((CTX[k] / 200_000) * 100), extra: tok(CTX[k]) + ' / ' + tok(200_000) },
-    five: limitMeter(five, paceOf(five, now)),
-    week: limitMeter(week, paceOf(week, now)),
-    status,
-    tools: top,
-    tokenTotal: big(total),
-    tokenOutput: big(output),
+    dirty: 0,
+    startedAt: NOW0 - SESSION_MS,
+    usd: COST[k],
+    pct: Math.round((CTX[k] / 200_000) * 100),
+    ctxTokens: CTX[k],
+    ctxWindow: 200_000,
+    five,
+    week,
+    showFive: true,
+    turnStartedAt: NOW0 + SEND * 1000,
+    agents: n,
+    toolCounts: counts,
+    tokens: { state: 'ready', total, output },
+    celebrating: t >= COMPLETE && t < COMPLETE + CELEBRATE,
+    sleeping: false,
   }
 }
 // 螃蟹图只在状态变化时换 (客户端里换图 = SMIL 动画从头播); 返回 [状态, 这张图出现的时刻]
-// 状态 = buildDesktop 传给 crabSvg 的那几样: mode / kind / heat / agents / mood
-function crabStateAt(t) {
-  const working = t >= SEND && t < COMPLETE
-  const running = TOOLS.find(x => t >= x.start && t < x.end)
-  const mode = t >= COMPLETE && t < COMPLETE + CELEBRATE ? 'celebrate' : working ? 'work' : 'idle'
-  return { mode, kind: running ? running.kind : 'think', heat: 'ok', agents: agentsAt(t), mood: moodAt(t) }
-}
+// 状态 = 插件的 deskCrab (和 buildDesktop 传给 crabSvg 的同一份)
+const crabStateAt = t => deskCrab(sceneOf(infoAt(t)))
 function crabAt(t) {
   const st = crabStateAt(t)
   const key = JSON.stringify(st)
@@ -202,14 +191,14 @@ function draw(v, t, typingOn) {
   const [st, since] = crabAt(t)
   const key = JSON.stringify(st) + since
   if (v.mounted !== key) {
-    v.crab.innerHTML = crabSvg(st, crabScale)
+    v.crab.innerHTML = crabSvg(st, DESK.crabScale)
     v.mounted = key
   }
   const svg = v.crab.querySelector('svg')
   svg.pauseAnimations()
   svg.setCurrentTime(Math.max(0, t - since))
   // 仪表盘: 真的 dashSvg (客户端版用量条不做滚动过渡, 数据变了直接换)
-  v.dash.innerHTML = dashSvg(dashData(t), { compact: false, width: dashW })
+  v.dash.innerHTML = dashSvg(dashData(infoAt(t)), { compact: DESK.compact, width: DESK.dashW })
   v.input.firstChild.textContent = t < SEND ? typed(PROMPT, t, 0.25, 0.05) || '输入消息…' : '输入消息…'
   v.input.style.color = t < SEND && t >= 0.25 ? '#ececea' : '#77776f'
 }

@@ -8,6 +8,7 @@ export const C = {
   link: 'rgb(177,185,249)',
   userBg: 'rgb(55,55,55)',
   border: 'rgb(136,136,136)',
+  dimText: '#868686', // dimColor (SGR 2 暗色) 的近似: Button dimColor 的标签、收据
   termBg: '#0c0c0c',
 }
 
@@ -50,7 +51,7 @@ export function transcript(g, row, items, opts = {}) {
     } else if (it.kind === 'turn') {
       // 每轮结束那行 (引擎的 TurnDuration: ✻ Baked for 9s), 后面可以接 usage-hud 的收据 (dimColor)
       const c = g.text(row, 0, '✻ ' + it.text, { fg: C.inactive })
-      if (it.receipt) g.text(row, c, it.receipt, { fg: '#868686' })
+      if (it.receipt) g.text(row, c, it.receipt, { fg: C.dimText })
       row += 1
     }
     it.endRow = row - 1

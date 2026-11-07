@@ -11,7 +11,7 @@
 <canvas id="c"></canvas>
 <script type="module">
 import { Grid, drawGrid, metrics } from '../lib/cells.js'
-import { scenePx, setFrame, SPRITE_W } from '../lib/crab.js'
+import { scenePx, SPRITE_W } from '/vendor/sprites.js'
 const W = 600, H = 200
 const cv = document.getElementById('c')
 cv.style.width = W + 'px'; cv.style.height = H + 'px'
@@ -34,8 +34,7 @@ window.demo = {
     g.text(5, 0, '╰──────╯', { fg: '#888888' })
     g.text(6, 0, 'abcdefghij0123456789', { fg: '#fff', bold: true })
     g.text(7, 0, '一二三四五六七八九十', { fg: '#fff' })
-    setFrame(Math.floor(t / 0.15))
-    g.raster(3, 20, scenePx({ working: true, kind: 'read', pct: 30, celebrating: false, sleeping: false, agents: 0 }), SPRITE_W, 3)
+    g.raster(3, 20, scenePx({ working: true, kind: 'read', pct: 30, celebrating: false, sleeping: false, agents: 0 }, Math.floor(t / 0.15)), SPRITE_W, 3)
     drawGrid(ctx, g, 10, 10, m)
   },
 }
