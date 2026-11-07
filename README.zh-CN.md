@@ -209,6 +209,7 @@ claude plugin test ./usage-hud
 ```
 
 - 终端会话会监视 mod 文件夹，保存即重载。桌面客户端会话不会，要运行 `/reload-plugins`。
+- 编辑器里的类型：mod 的 `tsconfig.json` 继承 `.claude-plugin/types/tsconfig.json`，这个文件夹是 Claude Code 从 mod 文件夹直接加载时（`--plugin-dir` 或 `CLAUDE_CODE_PLUGIN_DIRS`）每次写出来的，不进仓库；从插件市场安装的不会写。刚克隆下来，用 `claude --plugin-dir ./usage-hud --plugin-dir ./html-shelf` 启动一次，编辑器就有类型，也不再报 `Cannot read file`。
 - 改完把 `plugin.json` 的 `version` 升一级：usage-hud 在客户端里发现版本变了，会自己重载一次。
 - 终端里只用 ASCII、中文、`│ ─ ━ ✓` 和方块字符。`• ⏱ ↻ ✦` 这类字符在有些终端里宽度不定，会和旁边的字重叠。
 - `node tools/preview-client.mjs`：不开客户端，直接生成客户端面板的预览页 `tools/out/client.html`。

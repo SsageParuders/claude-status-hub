@@ -51,11 +51,11 @@ const MAC: Sys = { cwd: '/Users/me/proj', env: { HOME: '/Users/me' }, mac: true 
 const LINUX: Sys = { cwd: '/home/me/proj', env: { HOME: '/home/me' }, broken: ['xdg-open'] }
 const WSL: Sys = { cwd: '/home/me/proj', env: { HOME: '/home/me', WSL_DISTRO_NAME: 'Ubuntu-22.04' }, broken: ['wslview'] }
 
-// 比路径时不管斜杠方向和盘符 (测试跑在 Windows 上, 引擎可能把 /Users/... 规整成本机写法)
-const same = (a: string, b: string) => {
-  const n = (s: string) => s.replace(/\\/g, '/').replace(/^[A-Za-z]:(?=\/)/, '').toLowerCase()
-  return n(a) === n(b)
-}
+// 模拟的文件系统怎么认路径: 引擎按跑测试那台机器的规矩在模拟路径前面补一段再交给 fs 钩子
+//   (macOS / Linux 上 D:\proj\a.html 不算绝对路径, 补真实的工作目录; Windows 上 /Users/me/a.html 补盘符),
+//   所以引擎给的路径在某个 / 处以模拟路径结尾就是同一个; 斜杠方向、大小写不管
+const slashed = (s: string) => '/' + s.replace(/\\/g, '/').replace(/^\//, '').toLowerCase()
+const sameFile = (enginePath: string, path: string) => slashed(enginePath).endsWith(slashed(path))
 
 function mocks(on: any, sys: Sys = WIN) {
   const log = { opened: [] as unknown[], copied: [] as string[], toasts: [] as string[], filled: [] as string[], checked: [] as string[] }
@@ -64,16 +64,15 @@ function mocks(on: any, sys: Sys = WIN) {
   on('env.get', async ($: any, e: any) => ({ value: sys.env[String(e.name ?? e)] }))
   on('fs.exists', async ($: any, e: any) => {
     const p = String(e.path ?? e)
-    // 测试跑在 Windows 上, 引擎可能把 /System/... 规整成本机写法, 只比结尾
-    if (/[\\/]System[\\/]Library[\\/]CoreServices$/.test(p)) return { value: !!sys.mac }
+    if (sameFile(p, '/System/Library/CoreServices')) return { value: !!sys.mac }
     log.checked.push(p)
-    if (sys.files) return { value: [...sys.files, ...(sys.dirs ?? [])].some(f => same(f, p)) }
+    if (sys.files) return { value: [...sys.files, ...(sys.dirs ?? [])].some(f => sameFile(p, f)) }
     return { value: /weekly-report|report\.html$|notes[\\/]a\.html$/.test(p) }
   })
   on('process.run', async ($: any, e: any) => {
     const argv: string[] = e.argv ?? e
     log.opened.push(argv)
-    return { value: { exitCode: sys.broken?.includes(argv[0]) ? 3 : 0, stdout: '', stderr: '' } }
+    return { value: { exitCode: sys.broken?.includes(argv[0] ?? '') ? 3 : 0, stdout: '', stderr: '' } }
   })
   on('ui.toast', async ($: any, e: any) => {
     log.toasts.push(JSON.stringify(e))
@@ -85,7 +84,7 @@ function mocks(on: any, sys: Sys = WIN) {
   })
   on('fs.stat', async ($: any, e: any) => {
     const p = String(e.path ?? e)
-    const isDir = (sys.dirs ?? []).some(d => same(d, p))
+    const isDir = (sys.dirs ?? []).some(d => sameFile(p, d))
     return { value: { kind: isDir ? 'dir' : 'file', size: 0, mtimeMs: 0, isLink: false } }
   })
   on('prompt.fill', async ($: any, e: any) => {

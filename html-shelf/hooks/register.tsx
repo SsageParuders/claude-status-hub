@@ -1,4 +1,7 @@
-import type { Register } from 'claude-code'
+import type { Register, Elements, UiPressArgument } from 'claude-code'
+
+// 各个界面都有的元素 (Box / Text / Button / Code / Markdown ...): 画元素的函数拿它, 回调的参数就有类型
+type Els = Elements[keyof Elements]
 
 // html-shelf: 让终端里 Claude 的回复更顺手
 //   1. 回复里的文件路径 (裸路径 / `代码` / [文字](路径) / ~/路径) 变成链接, 全屏终端里单击打开
@@ -216,10 +219,11 @@ function absolute(p: string, base = root || cwd): string {
 
 // 一个路径可能指向的文件: 先按项目根目录, 再按当前目录 (Claude cd 进子目录后写的相对路径)
 function candidates(p: string): string[] {
-  const list = [absolute(p, root || cwd)]
+  const first = absolute(p, root || cwd)
+  const list = [first]
   if (root && cwd) {
     const alt = absolute(p, cwd)
-    if (keyOf(alt) !== keyOf(list[0])) list.push(alt)
+    if (keyOf(alt) !== keyOf(first)) list.push(alt)
   }
   return list
 }
@@ -288,7 +292,7 @@ function utf16Base64(s: string): string {
     const c = s.charCodeAt(i)
     bytes.push(c & 255, c >> 8)
   }
-  return (new Uint8Array(bytes) as any).toBase64()
+  return new Uint8Array(bytes).toBase64()
 }
 const psQuote = (s: string) => "'" + s.replace(/'/g, "''") + "'"
 
@@ -854,7 +858,7 @@ function markCopied($: any, id: string, isOn: boolean) {
   $.ui.invalidate('ui.render')
 }
 
-async function copyText($: any, id: string, text: string, surface: any, done: string) {
+async function copyText($: any, id: string, text: string, surface: UiPressArgument['surface'], done: string) {
   try {
     const r = await $.ui.copy({ text, surface })
     if (r?.isCopied) {
@@ -922,7 +926,7 @@ type CardSpec = {
   code: string
   fill?: { cmd: string; kind: ShellKind }
 }
-function drawCard($: any, els: any, c: CardSpec, gap: number) {
+function drawCard($: any, els: Els, c: CardSpec, gap: number) {
   const { Box, Text, Button, Code } = els
   const actions: any[] = []
   const fill = c.fill
@@ -976,7 +980,7 @@ function drawCard($: any, els: any, c: CardSpec, gap: number) {
 }
 
 // 代码块 (```) 的卡片
-function codeCard($: any, els: any, p: Extract<Part, { kind: 'code' }>, n: number, rid: string, gap: number) {
+function codeCard($: any, els: Els, p: Extract<Part, { kind: 'code' }>, n: number, rid: string, gap: number) {
   const kind = shellKindOf(p)
   const cmd = kind ? oneCommand(p.code, kind) : undefined
   return drawCard(
@@ -994,7 +998,7 @@ function codeCard($: any, els: any, p: Extract<Part, { kind: 'code' }>, n: numbe
 }
 
 // 行内命令的卡片: 复制 = 反引号里的原文; 填入 = 补一个 ! (原文已带 ! 不重复补)
-function inlineCard($: any, els: any, c: InlineCard, k: number, rid: string) {
+function inlineCard($: any, els: Els, c: InlineCard, k: number, rid: string) {
   return drawCard(
     $,
     els,
@@ -1012,7 +1016,7 @@ function inlineCard($: any, els: any, c: InlineCard, k: number, rid: string) {
 type Drawn = { tree: any; coverRight: number }
 
 // 一段文字画成 Markdown; 里面有真实存在的路径就换成可点击的链接
-async function proseMarkdown($: any, els: any, text: string, key: string, rid: string, budget: Budget) {
+async function proseMarkdown($: any, els: Els, text: string, key: string, rid: string, budget: Budget) {
   const { Markdown } = els
   if (mayLink(text, true)) {
     const linked = await linkify($, text, true, budget)
@@ -1094,7 +1098,7 @@ async function drawLinked($: any, e: any, props: { text: string; isFirstOfReply:
   if (hrefs.length === 0) return undefined
   noteFound(String(e.requestId ?? ''), found)
 
-  const { Box, Text, Markdown } = $.ui.resolve(e)
+  const { Box, Text, Markdown }: Els = $.ui.resolve(e)
   return (
     <Box flexDirection="row">
       <Text>{props.isFirstOfReply ? '● ' : '  '}</Text>
@@ -1113,7 +1117,7 @@ async function drawLinked($: any, e: any, props: { text: string; isFirstOfReply:
 // 整条回复包一层 (带 key = 悬停范围), 右上角叠一个平时隐藏的"复制全文"; 不挤动原来的排版.
 // 小底块用代码区的深灰 (盖在卡片标题栏上也看得清), 指到它上面变成标题栏的灰
 function withCopyAll($: any, e: any, tree: any, text: string, coverRight: number) {
-  const { Box, Text, Button } = $.ui.resolve(e)
+  const { Box, Text, Button }: Els = $.ui.resolve(e)
   const id = `${String(e.requestId ?? '')}:all`
   const isCopied = copied.has(id)
   const body = dedentAll(text)

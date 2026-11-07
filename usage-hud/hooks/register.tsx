@@ -117,6 +117,7 @@ import {
 //   没搬的: 悬停 (面板里拿不到指针) / 粒子和溜达 (螃蟹不走路) / "等你点头" (引擎不告诉我们你什么时候点了允许, 会一直挂着)
 // v0.17.5: 子代理小螃蟹换回 0.13 的 3x2 蹦跳画法; 打字时螃蟹不动 (只叫醒睡着的); needsFrame 不再抄 sprites 的帧号,
 //   改为算出这一帧的螃蟹和上次画的比 (lastCrab), 变了才重画
+// v0.17.6: 编辑器里的类型检查干净了 (tsconfig 关掉 noUncheckedIndexedAccess, hooks/runtime.d.ts 补上 Uint8Array.toBase64 的类型); 运行时不变
 //
 // 螃蟹各种状态怎么叠 (从高到低, 只有一个能决定 "姿势"; 2-7 的先后在 sprites.ts 的 crabPose, 终端和客户端共用):
 //   1. 跳一下 (你刚发出消息)   -> 蹲 / 腾空 / 落地, 约 0.6 秒
@@ -1151,7 +1152,7 @@ export function clockWidth(at: number): number {
 }
 function localeOf(v: string): string | undefined {
   if (!v || v === 'C' || v === 'POSIX') return undefined
-  const tag = v.split('.')[0]!.split('@')[0]!.replace(/_/g, '-')
+  const tag = v.split('.')[0].split('@')[0].replace(/_/g, '-')
   if (!tag) return undefined
   try {
     new Intl.DateTimeFormat(tag)
@@ -1338,7 +1339,7 @@ export const register: Register = on => {
   })
 
   on('turn.start', async ($, e, next) => {
-    if (!(e as any).agentId) {
+    if (!e.agentId) {
       engineWorking = true
       turnStartedAt = await $.clock.now()
       lastActive = turnStartedAt
@@ -1397,9 +1398,9 @@ export const register: Register = on => {
 
   // 启动 / 恢复 / /clear 时拿到会话记录的准确路径; 恢复时顺便拿到当时的上下文大小
   on('classic.SessionStart', async ($, e, next) => {
-    const src = String((e as any).source ?? '')
-    const path = String((e as any).transcript_path ?? '')
-    if (src === 'resume' || src === 'fork') resumeCtx = (e as any).context_tokens
+    const src = String(e.source ?? '')
+    const path = String(e.transcript_path ?? '')
+    if (src === 'resume' || src === 'fork') resumeCtx = e.context_tokens
     if (src === 'clear') {
       resumeCtx = undefined
       milestonePrimed = false // 花费从 0 重新算, 里程碑提示也重新开始
@@ -1415,7 +1416,7 @@ export const register: Register = on => {
 
   // 子代理看板: 开始 / 结束时间、类型、最后一句话
   on('classic.SubagentStart', async ($, e, next) => {
-    const id = String((e as any).agent_id ?? '')
+    const id = String(e.agent_id ?? '')
     if (id) {
       const now = await $.clock.now()
       const k = kidOf(id, now)
@@ -1430,14 +1431,14 @@ export const register: Register = on => {
       k.endNoted = false
       if (ask) ask.bgKids.add(id)
       dbg($, now, `子代理开始 ${id} (SubagentStart)`)
-      if ((e as any).agent_type) k.type = safe(String((e as any).agent_type))
+      if (e.agent_type) k.type = safe(String(e.agent_type))
       redraw($)
     }
     return next(e)
   })
 
   on('classic.SubagentStop', async ($, e, next) => {
-    const id = String((e as any).agent_id ?? '')
+    const id = String(e.agent_id ?? '')
     if (id) {
       const now = await $.clock.now()
       const k = kidOf(id, now)
@@ -1446,8 +1447,8 @@ export const register: Register = on => {
       if (k.endedAt === undefined) k.endedAt = now
       if (k.status === 'running') k.status = 'completed'
       kidEnded($, k, now, 'SubagentStop')
-      if ((e as any).agent_type && !k.type) k.type = safe(String((e as any).agent_type))
-      const last = String((e as any).last_assistant_message ?? '')
+      if (e.agent_type && !k.type) k.type = safe(String(e.agent_type))
+      const last = String(e.last_assistant_message ?? '')
       if (last) k.note = clip(safe(last.replace(/\s+/g, ' ')), 120)
       pruneKids()
       await syncAgents($, now) // 列表里它也不在跑了、主线程闲着 -> 开始防抖
@@ -1502,7 +1503,7 @@ export const register: Register = on => {
   })
 
   on('turn.complete', async ($, e, next) => {
-    if (!(e as any).agentId) {
+    if (!e.agentId) {
       const now = await $.clock.now()
       // 每轮收据: 在 next(e) 之前落到模块变量里, TurnDuration 那行画出来时就能找到
       const run = turnRun
@@ -1597,7 +1598,7 @@ export const register: Register = on => {
   // 子代理看板 (终端和客户端都画)
   on('ui.render', { component: 'Pane', requestId: AGENTS_PANE }, async ($, e) => {
     const els: any = $.ui.resolve(e)
-    return buildAgentsPane($, els, (e.props as any).bodyColumns ?? 60)
+    return buildAgentsPane($, els, e.props.bodyColumns ?? 60)
   })
 
   on('session.measure', async ($, e, next) => {
@@ -1617,14 +1618,14 @@ export const register: Register = on => {
   // 有消息送进会话 (v0.16.2 看 origin.kind):
   //   task-notification (后台子代理的结果送回来) = 同一次提问的延续; 其他来源 = 新提问, 上一次没做完的作废
   on('prompt.submit', async ($, e, next) => {
-    const kind = String((e as any).origin?.kind ?? 'composer')
+    const kind = String(e.origin?.kind ?? 'composer')
     const now = await $.clock.now()
-    dbg($, now, `prompt.submit origin=${kind}` + ((e as any).turnId ? ` (塞进正在跑的 ${(e as any).turnId})` : ' (闲着时)'))
+    dbg($, now, `prompt.submit origin=${kind}` + (e.turnId ? ` (塞进正在跑的 ${e.turnId})` : ' (闲着时)'))
     cancelEnd($, now, 'prompt.submit ' + kind)
     submitSinceTurn = kind
     if (kind === 'task-notification') {
       // 后台子代理的结果: 同一次提问的延续
-    } else if ((e as any).turnId) {
+    } else if (e.turnId) {
       askFromNext = true // 主线程跑着时打的字: 排在后面, 它那一段开始时才算新提问
     } else {
       let usd0: number | undefined
@@ -1646,7 +1647,7 @@ export const register: Register = on => {
   // 压缩完成 (主会话的; 预先算好备用的 precompute 不算) -> 状态格亮 "压缩完了"
   on('session.compact', async ($, e, next) => {
     const r: any = await next(e)
-    if (!(e as any).agentId && e.trigger !== 'precompute' && r && !r.skip) {
+    if (!e.agentId && e.trigger !== 'precompute' && r && !r.skip) {
       saidCtxFull = false
       noteNow($, '✓ 压缩完了', GOOD, await $.clock.now())
     }
@@ -1666,7 +1667,7 @@ export const register: Register = on => {
     const theirs = await next(e)
     const els: any = $.ui.resolve(e)
     const { Box } = els
-    const cols = Math.max(40, ((e as any).viewport?.columns ?? 100) - 2)
+    const cols = Math.max(40, (e.viewport?.columns ?? 100) - 2)
     const view = await buildView($, els, e.surface, cols, !!e.props.isWorking)
     return (
       <Box flexDirection="column">

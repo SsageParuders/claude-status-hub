@@ -211,6 +211,7 @@ claude plugin test ./usage-hud
 ```
 
 - Terminal sessions watch the mod folders and reload on save. Desktop app sessions don't; run `/reload-plugins` there.
+- Editor types: each mod's `tsconfig.json` extends `.claude-plugin/types/tsconfig.json`, which Claude Code writes every time it loads the mod straight from its folder (`--plugin-dir` or `CLAUDE_CODE_PLUGIN_DIRS`); it is not in the repository, and an install from the marketplace never writes it. After cloning, start `claude --plugin-dir ./usage-hud --plugin-dir ./html-shelf` once; the editor then has the types and stops reporting `Cannot read file`.
 - Bump `version` in `plugin.json` after each change: usage-hud reloads itself in the desktop app when the version changes, and marketplace users only receive a new version.
 - In the terminal, use only ASCII, CJK characters, `│ ─ ━ ✓` and block characters. Glyphs such as `• ⏱ ↻ ✦` have an ambiguous width in some terminals and overlap their neighbours.
 - `node tools/preview-client.mjs` renders a preview of the desktop panel to `tools/out/client.html` without opening the app.

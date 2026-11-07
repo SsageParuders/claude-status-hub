@@ -689,7 +689,7 @@ test('每轮收据: 引擎那行原样保留, 后面追加花费/改文件/工�
   expect((await r2.findAll({ type: 'Text' })).map((x: any) => x.text)).toContain(' · 工具 1 次')
   await r2.unmount()
   // 什么都没有 -> 空串 (只留引擎那行)
-  expect(receiptText({ turnId: 'x', startedAt: 0, completedAt: 0, durationMs: 0, usd: 0, files: 0, add: 0, del: 0, tools: 0 })).toBe('')
+  expect(receiptText({ usd: 0, files: 0, add: 0, del: 0, tools: 0 })).toBe('')
 })
 
 test('一键压缩: 上下文 >=75% 时三档都有 [压缩] 按钮, 点了跑 /compact 且防连点; 格子宽度不变', async ($, on) => {
@@ -1858,7 +1858,8 @@ test('睡着时一打字马上醒; 发出消息跳一下 (腾空时不画腿), �
   const openEyes = (p: number[][]) => p.flat().filter(c => c === COL.eye).length
   await clock.advance(5 * 60_000 + 1_000)
   expect(openEyes((await panelNow($)).px)).toBe(0)
-  await $.prompt.edit({ text: '', cursor: 0, start: 0, end: 0, inputText: 'h', origin: { kind: 'composer' } } as any)
+  // 测试的 $ 运行时能直接触发 prompt.edit, 只是类型声明里还没列它
+  await ($.prompt as any).edit({ text: '', cursor: 0, start: 0, end: 0, inputText: 'h', origin: { kind: 'composer' } })
   let px = (await panelNow($)).px
   expect(openEyes(px)).toBe(2)
   // 发出消息: 第 0 帧蹲下 (身体下移一行), 第 1、2 帧腾空 (没有腿), 4 帧后落回平常
